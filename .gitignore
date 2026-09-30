@@ -1,0 +1,23 @@
+# Build output (regenerate with ./build_dist.sh)
+dist/
+
+# Node
+node_modules/
+npm-debug.log*
+package-lock.json
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+.vscode-ctags
+
+# Local test images and exports
+*.local.*
+string_art_instructions*.txt
+string_art_robot*.json
+string_art*.png

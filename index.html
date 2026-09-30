@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<!--
+    String Art Generator
+    Copyright (c) 2025-2026 Eduardo Correia <ecorreia@apliant.com.br>
+
+    This file is part of String Art Generator. It is free software, licensed
+    under the GNU Lesser General Public License v3.0 or later. See
+    COPYING.LESSER and COPYING for details.
+
+    SPDX-License-Identifier: LGPL-3.0-or-later
+-->
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="author" content="Eduardo Correia <ecorreia@apliant.com.br>">
+    <meta name="description" content="Turn images into string art patterns with step-by-step instructions and robot-ready JSON.">
+    <title>String Art Generator</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎨 String Art Generator</h1>
+            <p>Transform your images into beautiful string art patterns</p>
+            <p class="author">by Eduardo Correia</p>
+        </header>
+
+        <div class="main-content">
+            <!-- Controls Panel -->
+            <div class="controls-panel">
+                <div class="section">
+                    <h3>📸 Image Upload</h3>
+                    <input type="file" id="imageInput" accept="image/*">
+                    <div id="imagePreview"></div>
+                </div>
+
+                <div class="section">
+                    <h3>⚙️ Parameters</h3>
+                    
+                    <div class="param">
+                        <label for="algorithm">Algorithm:</label>
+                        <select id="algorithm" class="algorithm-select">
+                            <option value="greedy">Greedy (Standard)</option>
+                            <option value="radon">Radon Transform</option>
+                        </select>
+                    </div>
+
+                    <div class="param greedy-only" id="autoOptimize">
+                        <label>
+                            <input type="checkbox" id="autoOptimizeCheck">
+                            <strong>🎯 Auto-Optimize Parameters</strong>
+                        </label>
+                        <small class="param-hint">Analyzes your image and sets optimal parameters automatically</small>
+                    </div>
+
+                    <div id="optimizationResults" class="optimization-results" style="display: none;">
+                        <p><strong>📊 Image Analysis:</strong></p>
+                        <ul id="analysisInfo"></ul>
+                        <button id="applyOptimization" class="btn btn-small">✨ Apply Suggested Settings</button>
+                        <button id="dismissOptimization" class="btn btn-small">✕ Dismiss</button>
+                    </div>
+
+                    <div class="algorithm-info" id="algorithmInfo">
+                        <p class="info-text">
+                            <strong>Greedy:</strong> Iteratively selects lines that best match dark areas. 
+                            Excellent for portraits and photos.
+                        </p>
+                    </div>
+                    
+                    <div class="algorithm-note radon-only" id="radonNote" style="display: none;">
+                        <p>⚠️ <strong>Radon Transform uses:</strong></p>
+                        <ul>
+                            <li>✅ Number of Pins</li>
+                            <li>✅ Min Pin Distance</li>
+                            <li>✅ Iterations (max lines)</li>
+                            <li>✅ Line Opacity & Weight</li>
+                            <li>✅ Darkness Threshold (to stop)</li>
+                            <li>🔬 Radon Angles (new!)</li>
+                        </ul>
+                        <p><small>All parameters work together for best results</small></p>
+                    </div>
+                    
+                    <div class="param">
+                        <label for="radius">Radius (pixels):</label>
+                        <input type="number" id="radius" value="300" min="100" max="600" step="10">
+                        <span class="value" id="radiusValue">300</span>
+                    </div>
+
+                    <div class="param">
+                        <label for="pins">Number of Pins:</label>
+                        <input type="number" id="pins" value="200" min="50" max="500" step="10">
+                        <span class="value" id="pinsValue">200</span>
+                    </div>
+
+                    <div class="param">
+                        <label for="iterations">String Iterations:</label>
+                        <input type="number" id="iterations" value="3000" min="500" max="10000" step="100">
+                        <span class="value" id="iterationsValue">3000</span>
+                    </div>
+
+                    <div class="param">
+                        <label for="lineOpacity">Line Opacity (%):</label>
+                        <input type="range" id="lineOpacity" value="20" min="5" max="50" step="1">
+                        <span class="value" id="lineOpacityValue">20</span>
+                    </div>
+
+                    <div class="param">
+                        <label for="minDistance">Min Pin Distance:</label>
+                        <input type="number" id="minDistance" value="20" min="10" max="100" step="5">
+                        <span class="value" id="minDistanceValue">20</span>
+                    </div>
+
+                    <div class="param radon-only" id="thresholdParam" style="display: none;">
+                        <label for="threshold">Darkness Threshold:</label>
+                        <input type="range" id="threshold" value="128" min="0" max="255" step="1">
+                        <span class="value" id="thresholdValue">128</span>
+                        <small class="param-hint">Stops early when the best line scores below this value</small>
+                    </div>
+
+                    <div class="param">
+                        <label for="lineWeight">Line Weight (px):</label>
+                        <input type="range" id="lineWeight" value="1" min="0.5" max="3" step="0.1">
+                        <span class="value" id="lineWeightValue">1</span>
+                    </div>
+
+                    <div class="param radon-only" id="radonAngles" style="display: none;">
+                        <label for="angles">Radon Angles:</label>
+                        <input type="number" id="angles" value="180" min="60" max="360" step="10">
+                        <span class="value" id="anglesValue">180</span>
+                        <small class="param-hint">Number of angle samples (more = finer detail, slower)</small>
+                    </div>
+                    
+                    <button id="generateBtn" class="btn primary">🎯 Generate String Art</button>
+                </div>
+
+                <div class="section" id="animationSection" style="display: none;">
+                    <h3>🎬 Animation</h3>
+                    
+                    <div class="param">
+                        <label for="animationSpeed">Speed (lines/frame):</label>
+                        <input type="range" id="animationSpeed" value="10" min="1" max="100" step="1">
+                        <span class="value" id="animationSpeedValue">10</span>
+                    </div>
+
+                    <div class="button-group">
+                        <button id="playBtn" class="btn">▶️ Play</button>
+                        <button id="pauseBtn" class="btn">⏸️ Pause</button>
+                        <button id="resetBtn" class="btn">🔄 Reset</button>
+                        <button id="skipBtn" class="btn">⏭️ Skip to End</button>
+                    </div>
+
+                    <div class="progress-info">
+                        <p>Progress: <span id="progressText">0 / 0</span></p>
+                        <div class="progress-bar">
+                            <div id="progressFill"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section" id="exportSection" style="display: none;">
+                    <h3>📥 Export</h3>
+                    <button id="exportInstructions" class="btn">📋 Download Instructions (TXT)</button>
+                    <button id="exportJSON" class="btn">💾 Download Robot JSON</button>
+                    <button id="exportImage" class="btn">🖼️ Save as Image</button>
+                </div>
+
+                <div class="section" id="statsSection" style="display: none;">
+                    <h3>📊 Project Statistics</h3>
+                    <div class="stats-grid">
+                        <div class="stat-item">
+                            <span class="stat-label">🧵 String Required:</span>
+                            <span class="stat-value" id="stringLength">-</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">📦 With Extra (20%):</span>
+                            <span class="stat-value" id="stringLengthExtra">-</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">⏱️ Work Time:</span>
+                            <span class="stat-value" id="workTime">-</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">☕ With Breaks:</span>
+                            <span class="stat-value" id="totalTime">-</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">📅 Sessions:</span>
+                            <span class="stat-value" id="sessions">-</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">📐 Physical Size:</span>
+                            <span class="stat-value" id="physicalSize">-</span>
+                        </div>
+                    </div>
+                    <div class="info-box">
+                        <strong>💡 Tips for Manual Creation:</strong>
+                        <ul>
+                            <li>Take 5-minute breaks every 30 minutes</li>
+                            <li>Work in sessions of 90 minutes max</li>
+                            <li>Speed decreases with fatigue (normal!)</li>
+                            <li>Buy 20% extra string for knots and mistakes</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Canvas Panel -->
+            <div class="canvas-panel">
+                <div class="canvas-container">
+                    <canvas id="mainCanvas"></canvas>
+                </div>
+                <div id="statusMessage"></div>
+            </div>
+        </div>
+
+        <footer class="app-footer">
+            <p>
+                String Art Generator &copy; 2025-2026
+                <strong>Eduardo Correia</strong>
+                &lt;<a href="mailto:ecorreia@apliant.com.br">ecorreia@apliant.com.br</a>&gt;
+            </p>
+            <p>
+                Free software, licensed under the
+                <a href="https://www.gnu.org/licenses/lgpl-3.0.html" target="_blank" rel="noopener noreferrer">GNU LGPL v3.0 or later</a>.
+            </p>
+        </footer>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

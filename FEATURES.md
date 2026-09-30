@@ -22,7 +22,7 @@ Copyright (c) 2025-2026 Eduardo Correia <ecorreia@apliant.com.br>
 **Radon-only parameters:**
 
 - Radon angles (60-360): angular resolution of the projections
-- Darkness threshold (0-255): stops early when the best line scores below it
+- Darkness threshold (0-255, default 16): stops once the image is covered
 
 ---
 
@@ -43,7 +43,7 @@ Copyright (c) 2025-2026 Eduardo Correia <ecorreia@apliant.com.br>
 ### Auto-optimize (Greedy)
 
 - ✅ Analyzes contrast, edge density, and darkness of the uploaded image
-- ✅ Classifies it (portrait, geometric, low-contrast, dark, light, general)
+- ✅ Classifies it (photo/portrait, high detail/texture, low-contrast, dark, light, general)
 - ✅ Suggests pins, iterations, opacity, minimum distance, and line weight
 
 ### Customizable parameters

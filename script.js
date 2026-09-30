@@ -44,7 +44,7 @@ class StringArtGenerator {
             iterations: 3000,
             lineOpacity: 20,
             minDistance: 20,
-            threshold: 128,
+            threshold: 16,
             lineWeight: 1,
             animationSpeed: 10,
             // Radon-specific parameters
@@ -262,17 +262,16 @@ class StringArtGenerator {
         }
         const edgeRatio = edgePixels / data.length;
 
-        // Detect if it's likely a portrait (face detection heuristic)
-        // High detail in center, some symmetry
-        const centerDetail = this.calculateCenterDetail(data, size);
-        const isLikelyPortrait = centerDetail > 0.6 && edgeRatio > 0.15 && contrast > 0.3;
-
-        // Classify image type
+        // Classify image type. The thresholds were calibrated on standard test
+        // photos (portraits, animals, objects, text, logos, textures, scenery).
+        // Faces can't be told apart from other photos with these global
+        // statistics, so "photo" covers any detailed, mid-tone photograph.
         let imageType = 'general';
-        if (isLikelyPortrait) {
-            imageType = 'portrait';
+        if (contrast > 0.45 && edgeRatio >= 0.03 && edgeRatio <= 0.25 &&
+            darkRatio >= 0.3 && darkRatio <= 0.6) {
+            imageType = 'photo';
         } else if (edgeRatio > 0.25) {
-            imageType = 'geometric';
+            imageType = 'high-detail';
         } else if (contrast < 0.25) {
             imageType = 'low-contrast';
         } else if (darkRatio > 0.6) {
@@ -286,7 +285,6 @@ class StringArtGenerator {
             darkRatio,
             contrast,
             edgeRatio,
-            centerDetail,
             imageType,
             stdDev,
             minIntensity,
@@ -294,33 +292,11 @@ class StringArtGenerator {
         };
     }
 
-    calculateCenterDetail(data, size) {
-        const centerSize = Math.floor(size / 3);
-        const centerStart = Math.floor(size / 2 - centerSize / 2);
-
-        let centerVariance = 0;
-        let count = 0;
-
-        for (let y = centerStart; y < centerStart + centerSize; y++) {
-            for (let x = centerStart; x < centerStart + centerSize; x++) {
-                if (x > 0 && x < size - 1 && y > 0 && y < size - 1) {
-                    const idx = y * size + x;
-                    const diff = Math.abs(data[idx] - data[idx + 1]) +
-                                Math.abs(data[idx] - data[idx + size]);
-                    centerVariance += diff;
-                    count++;
-                }
-            }
-        }
-
-        return count > 0 ? (centerVariance / count) / 255 : 0; // Normalized
-    }
-
     calculateOptimalParams(analysis) {
         const params = {};
 
         // Number of pins based on image detail
-        if (analysis.edgeRatio > 0.25 || analysis.imageType === 'portrait') {
+        if (analysis.edgeRatio > 0.25 || analysis.imageType === 'photo') {
             params.numPins = 250; // High detail
         } else if (analysis.edgeRatio > 0.15) {
             params.numPins = 200; // Medium detail
@@ -329,7 +305,7 @@ class StringArtGenerator {
         }
 
         // Iterations based on darkness and contrast
-        if (analysis.imageType === 'portrait') {
+        if (analysis.imageType === 'photo') {
             params.iterations = 3500;
         } else if (analysis.darkRatio > 0.5) {
             params.iterations = 4000; // Dark images need more lines
@@ -370,17 +346,17 @@ class StringArtGenerator {
         const infoList = document.getElementById('analysisInfo');
 
         // Image type
-        const typeEmoji = {
-            'portrait': '👤',
-            'geometric': '📐',
-            'low-contrast': '🌫️',
-            'dark': '🌑',
-            'light': '☀️',
-            'general': '🖼️'
+        const typeLabel = {
+            'photo': '📷 Photo / portrait',
+            'high-detail': '🌿 High detail / texture',
+            'low-contrast': '🌫️ Low contrast',
+            'dark': '🌑 Dark',
+            'light': '☀️ Light',
+            'general': '🖼️ General'
         };
 
         let html = '';
-        html += `<li><strong>Type:</strong> ${typeEmoji[analysis.imageType]} ${analysis.imageType.charAt(0).toUpperCase() + analysis.imageType.slice(1)}</li>`;
+        html += `<li><strong>Type:</strong> ${typeLabel[analysis.imageType]}</li>`;
         html += `<li><strong>Contrast:</strong> ${(analysis.contrast * 100).toFixed(0)}% ${analysis.contrast > 0.5 ? '(High)' : analysis.contrast > 0.3 ? '(Medium)' : '(Low)'}</li>`;
         html += `<li><strong>Detail Level:</strong> ${(analysis.edgeRatio * 100).toFixed(0)}% edges</li>`;
         html += `<li><strong>Darkness:</strong> ${(analysis.darkRatio * 100).toFixed(0)}% dark pixels</li>`;
@@ -631,6 +607,10 @@ class StringArtGenerator {
         await new Promise(resolve => setTimeout(resolve, 0));
         const projections = this.calculateRadonTransform(this.grayscaleData, size);
 
+        // Mean darkness of each pin-to-pin line in the original image,
+        // filled in on first use (NaN = not computed yet)
+        projections.originalMean = new Float32Array(numPins * numPins).fill(NaN);
+
         // Use iterative approach similar to greedy but guided by Radon
         // This respects minDistance and number of pins while using Radon scores
         let currentPin = 0;
@@ -726,7 +706,8 @@ class StringArtGenerator {
         return { intensity, numAngles, numRhos, rhoSteps, rhoStep };
     }
 
-    calculateRadonLineScore(pin1, pin2, projections, workingData, size) {
+    // Index of the projection bin nearest to the line between two pins
+    radonBin(pin1, pin2, projections) {
         const p1 = this.pins[pin1];
         const p2 = this.pins[pin2];
 
@@ -740,18 +721,34 @@ class StringArtGenerator {
         // Signed distance from the center to the line along that normal
         let rho = (p1.x - this.centerX) * Math.cos(theta) + (p1.y - this.centerY) * Math.sin(theta);
 
-        // Look up the nearest projection bin. theta = pi is theta = 0 with rho negated.
-        const { intensity, numAngles, numRhos, rhoSteps, rhoStep } = projections;
+        // theta = pi is theta = 0 with rho negated
+        const { numAngles, numRhos, rhoSteps, rhoStep } = projections;
         let angleIdx = Math.round((theta / Math.PI) * numAngles);
         if (angleIdx >= numAngles) {
             angleIdx -= numAngles;
             rho = -rho;
         }
         const rhoIdx = Math.min(numRhos - 1, Math.max(0, Math.round(rho / rhoStep) + rhoSteps));
-        const radonScore = intensity[angleIdx * numRhos + rhoIdx];
+        return angleIdx * numRhos + rhoIdx;
+    }
 
-        // Combine Radon intensity with actual pixel values along line
-        const pixelScore = this.calculateLineScore(pin1, pin2, workingData, size);
+    // Both terms are mean darkness along the line (0-255), so the weights
+    // mean what they say and the score can be compared with the threshold.
+    calculateRadonLineScore(pin1, pin2, projections, workingData, size) {
+        // Actual darkness remaining along the line
+        const pixelScore = this.calculateLineScore(pin1, pin2, workingData, size, true);
+
+        // The projections come from the original image and never change, so
+        // scale them by the share of this line's darkness that is left. Lines
+        // through areas already covered by other strings then fade too.
+        const pairIdx = Math.min(pin1, pin2) * this.gen.numPins + Math.max(pin1, pin2);
+        let originalMean = projections.originalMean[pairIdx];
+        if (Number.isNaN(originalMean)) {
+            originalMean = this.calculateLineScore(pin1, pin2, this.grayscaleData, size, true);
+            projections.originalMean[pairIdx] = originalMean;
+        }
+        const remaining = originalMean > 0 ? Math.min(1, pixelScore / originalMean) : 0;
+        const radonScore = projections.intensity[this.radonBin(pin1, pin2, projections)] * remaining;
 
         // Weighted combination: 70% Radon, 30% actual pixels
         const radonWeight = 0.7;
@@ -760,7 +757,8 @@ class StringArtGenerator {
         return radonScore * radonWeight + pixelScore * pixelWeight;
     }
 
-    calculateLineScore(pin1, pin2, data, size) {
+    // Sum of the values along the line, or their mean when `average` is set
+    calculateLineScore(pin1, pin2, data, size, average = false) {
         const p1 = this.pins[pin1];
         const p2 = this.pins[pin2];
 
@@ -771,6 +769,7 @@ class StringArtGenerator {
         const y2 = p2.y - this.centerY + this.gen.radius;
 
         let score = 0;
+        let count = 0;
         const steps = Math.max(1, Math.ceil(Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1))));
 
         for (let i = 0; i <= steps; i++) {
@@ -781,9 +780,11 @@ class StringArtGenerator {
             if (x >= 0 && x < size && y >= 0 && y < size) {
                 const idx = y * size + x;
                 score += data[idx];
+                count++;
             }
         }
 
+        if (average) return count > 0 ? score / count : 0;
         return score;
     }
 

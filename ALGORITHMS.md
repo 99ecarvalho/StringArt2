@@ -50,7 +50,9 @@ but adds a Radon projection score to each candidate line.
    - **ρ** = signed distance from the center
 2. For each iteration, starting from the current pin:
    - Looks up the projection for every candidate pin-to-pin line
-   - Scores it as 70% Radon intensity + 30% remaining darkness along the line
+   - Scores it as 70% Radon intensity + 30% mean remaining darkness along the
+     line. The Radon intensity is scaled by how much of the line's original
+     darkness is left, so it fades as strings cover that area
    - Picks the best line, lightens its pixels, and moves to the new pin
 3. Stops after the iteration limit, or earlier when the best score falls
    below the darkness threshold
@@ -74,8 +76,8 @@ Radon Transform: R(θ, ρ) = ∫∫ f(x,y) δ(x·cos(θ) + y·sin(θ) - ρ) dx d
 - **Radon Angles**: Number of angles to sample (60-360)
   - More angles = finer angular resolution
   - Default: 180 (every 1°)
-- **Darkness Threshold**: Stops generation when the best line scores below
-  this value
+- **Darkness Threshold** (default 16): Stops generation once no line is
+  darker than this on average, so light images get fewer lines
 - **Iterations**: Maximum number of lines to use
 - **Number of Pins**, **Min Pin Distance**, **Line Opacity**: as in Greedy
 
@@ -88,8 +90,8 @@ Radon Transform: R(θ, ρ) = ∫∫ f(x,y) δ(x·cos(θ) + y·sin(θ) - ρ) dx d
 ### Cons:
 - ❌ Less recognizable for portraits
 - ❌ More abstract results
-- ❌ The Radon score is precomputed and does not fade as lines are drawn,
-  so strong structures can attract many lines
+- ❌ Stops earlier than Greedy on light images (raise Iterations or lower
+  the threshold for a denser result)
 - ❌ Precomputing the transform adds a short delay before the first line
 
 ---
@@ -149,7 +151,8 @@ for θ from 0° to 180°:
 for each iteration:
   for each targetPin (respecting minDistance):
     (θ, ρ) = normal angle and signed distance of the line
-    score = 0.7 * R[θ][ρ] + 0.3 * sum of remaining pixels along line
+    remaining = mean remaining darkness / mean original darkness
+    score = 0.7 * R[θ][ρ] * remaining + 0.3 * mean remaining darkness
   if bestScore < threshold: stop
   draw line to bestPin
   subtract line from working image

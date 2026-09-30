@@ -128,12 +128,12 @@ Radius: 300 pixels
 Pins: 200-300
 Radon Angles: 180
 Iterations: 3000
-Darkness Threshold: 128 (default)
+Darkness Threshold: 16 (default)
 ```
 
 **Tips:**
 - More angles (240-360) = finer angular detail
-- Raise the darkness threshold to stop earlier on light images
+- Raise the darkness threshold for a lighter, sparser result; lower it for a denser one
 - Great for logos and geometric designs
 
 ---
@@ -186,10 +186,12 @@ Darkness Threshold: 128 (default)
 - 180: Balanced (recommended)
 - 240-360: Fine detail, slower
 
-**Darkness Threshold** (0-255)
-- Generation stops when the best line scores below this value
-- Low values: always uses all iterations
-- High values: stops once the image is mostly covered
+**Darkness Threshold** (0-255, default 16)
+- Generation stops once no line is darker than this on average,
+  so light images automatically get fewer lines
+- 0: always uses all iterations
+- 16: stops when the image is well covered (recommended)
+- 32-64: lighter, sparser result
 
 **Iterations** (limit on lines)
 - Caps the number of lines

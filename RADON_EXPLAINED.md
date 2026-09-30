@@ -16,8 +16,9 @@ Once, before the loop:
 For each iteration:
   1. For each candidate pin:
      a. Skip it if it is closer than Min Pin Distance (as in Greedy)
-     b. Look up the Radon score of the line
-     c. Compute the pixel score of the line
+     b. Compute the pixel score of the line
+     c. Look up the Radon score of the line, scaled by how much of the
+        line's original darkness is left
      d. Combine: 70% Radon + 30% pixels
   2. Stop if the best score is below the Darkness Threshold
   3. Choose the best line
@@ -30,9 +31,14 @@ For each iteration:
 ```javascript
 finalScore = 0.7 × radonScore + 0.3 × pixelScore
 
-radonScore = mean darkness along the line, from the precomputed projections
-pixelScore = sum of the remaining darkness along the line
+pixelScore = mean remaining darkness along the line (working image)
+remaining  = pixelScore / mean darkness along the line in the original image
+radonScore = projection value for the line × remaining
 ```
+
+Both scores are means on the same 0-255 scale, so the weights mean what they
+say, and the final score can be compared directly with the Darkness
+Threshold.
 
 ## 📊 Parameters
 
@@ -44,12 +50,15 @@ Every parameter is used:
 | **Min Pin Distance** | Skips lines between nearby pins |
 | **Iterations** | Maximum number of lines |
 | **Line Opacity** | How much each line lightens the working image, and the drawing opacity |
-| **Darkness Threshold** | Stops early when no remaining line scores above it |
+| **Darkness Threshold** | Stops once no line is darker than this on average (default 16) |
 | **Line Weight** | Visual thickness of the lines |
 | **Radon Angles** | Angular resolution of the projections |
 
 The Darkness Threshold only applies to the Radon mode, so the page shows it
-only when Radon is selected.
+only when Radon is selected. Because the score fades as strings cover the
+image, the threshold works as an automatic stop: light images, such as logos
+and text, finish with fewer lines than dark ones. Set it to 0 to always use
+every iteration.
 
 ### 🔬 Radon Angles
 
@@ -89,9 +98,10 @@ choose the best score
 precompute: Radon projections at every angle
 
 for each candidate pin:
-  pixelScore = sum of remaining darkness along the line
-  radonScore = projection value for this line
+  pixelScore = mean remaining darkness along the line
+  radonScore = projection value for this line × share of darkness left
   score = 0.7 * radonScore + 0.3 * pixelScore
+stop if the best score < threshold
 choose the best score
 ```
 
@@ -179,15 +189,23 @@ line from pin1 to pin2:
 - **70% Radon**: overall guidance from the image's structure
 - **30% pixels**: local correction from the image as it is being covered
 
-The weights were chosen by experiment. The Radon score is computed once from
-the original image and does not fade as lines are drawn; the pixel score
-does, which is what moves the algorithm on to new areas.
+The weights were chosen by experiment.
 
-Note that the two terms are on different scales: the Radon score is a
-**mean** (0-255), while the pixel score is a **sum** over every pixel on the
-line. On typical images the pixel term is therefore much larger in absolute
-terms, and the Radon term acts as a structural bias rather than the dominant
-factor. The same scale applies to the Darkness Threshold.
+### Why the Radon score is scaled
+
+The projections are computed once, from the original image. If they were
+used as they are, a line through a dark area would keep its high Radon score
+however many strings already cover that area, and the same lines would be
+drawn over and over. Scaling each projection by the share of the line's
+original darkness that remains in the working image makes the Radon score
+fade exactly as the pixels do, whichever strings covered them.
+
+### Difference from Greedy
+
+Greedy scores a line by the **sum** of the darkness along it, which favors
+long lines through the middle of the circle. The Radon mode uses **means**,
+so short lines along dark edges compete on equal terms. Together with the
+threshold, this gives the Radon mode its higher-contrast, sparser look.
 
 ## ✨ Summary
 

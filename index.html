@@ -113,9 +113,9 @@
 
                     <div class="param radon-only" id="thresholdParam" style="display: none;">
                         <label for="threshold">Darkness Threshold:</label>
-                        <input type="range" id="threshold" value="128" min="0" max="255" step="1">
-                        <span class="value" id="thresholdValue">128</span>
-                        <small class="param-hint">Stops early when the best line scores below this value</small>
+                        <input type="range" id="threshold" value="16" min="0" max="255" step="1">
+                        <span class="value" id="thresholdValue">16</span>
+                        <small class="param-hint">Stops once no line is darker than this on average (0 = always use all iterations)</small>
                     </div>
 
                     <div class="param">

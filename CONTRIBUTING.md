@@ -18,7 +18,7 @@ a change merged with as little back-and-forth as possible.
 - **Report a bug** or unexpected behavior. See [Reporting bugs](#reporting-bugs).
 - **Improve the documentation.** If something was unclear or wrong, a fix is
   welcome. The user guides are [README.md](README.md),
-  [QUICK_START.md](QUICK_START.md), [ALGORITHMS.md](ALGORITHMS.md), and
+  [QUICKSTART.md](QUICKSTART.md), [ALGORITHMS.md](ALGORITHMS.md), and
   [RADON_EXPLAINED.md](RADON_EXPLAINED.md).
 - **Improve the algorithms.** Better line scoring, faster generation (for
   example, moving the work into a Web Worker), and new algorithms are all

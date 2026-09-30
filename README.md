@@ -97,7 +97,7 @@ Choose between two algorithms:
 - **Simple subjects** are more recognizable than busy scenes.
 - **Start small**: try 200 pins and 2000 iterations first.
 - **Line opacity**: lower values (10-20%) often look more realistic.
-- See [QUICK_START.md](QUICK_START.md) for suggested settings per algorithm.
+- See [QUICKSTART.md](QUICKSTART.md) for suggested settings per algorithm.
 
 ## Creating physical string art
 
@@ -163,7 +163,7 @@ This writes `dist/`, which is not tracked in git. See
 
 | Document | Contents |
 | -------- | -------- |
-| [QUICK_START.md](QUICK_START.md) | Which algorithm to use and suggested settings |
+| [QUICKSTART.md](QUICKSTART.md) | Which algorithm to use and suggested settings |
 | [ALGORITHMS.md](ALGORITHMS.md) | How both algorithms work and how they compare |
 | [RADON_EXPLAINED.md](RADON_EXPLAINED.md) | The hybrid Radon mode in detail |
 | [FEATURES.md](FEATURES.md) | Complete feature list |

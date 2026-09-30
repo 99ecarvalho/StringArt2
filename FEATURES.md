@@ -163,7 +163,7 @@ after generation without regenerating.
 ## 📁 Documentation files
 
 1. **README.md** - Project overview
-2. **QUICK_START.md** - Algorithm selection and suggested settings
+2. **QUICKSTART.md** - Algorithm selection and suggested settings
 3. **ALGORITHMS.md** - How the algorithms work and compare
 4. **RADON_EXPLAINED.md** - The hybrid Radon mode in detail
 5. **BUILD_GUIDE.md** - Building and deploying

@@ -1,6 +1,93 @@
-# 🚀 Quick Start Guide - Algorithm Selection
+# 🚀 Quick Start Guide
 
 Copyright (c) 2025-2026 Eduardo Correia <ecorreia@apliant.com.br>
+
+- [Getting it running](#getting-it-running)
+- [Building the distributable](#building-the-distributable)
+- [Deploying](#deploying)
+- [Choosing an algorithm](#when-to-use-each-algorithm)
+
+## Getting it running
+
+String Art Generator is a static web page. There is nothing to install and
+no server-side code: all you need is a modern browser (Chrome, Edge, Firefox,
+or Safari).
+
+### 1. Get the code
+
+```bash
+git clone <repository-url> string-art-generator
+cd string-art-generator
+```
+
+### 2. Start it
+
+**Option A: open the file directly**
+
+```bash
+xdg-open index.html        # Linux
+open index.html            # macOS
+start index.html           # Windows (cmd or PowerShell)
+```
+
+**Option B: serve it locally** (closest to how it runs once deployed)
+
+Use whichever of these you already have:
+
+```bash
+python3 -m http.server 8080      # Python 3
+npx --yes serve -l 8080 .        # Node.js
+php -S localhost:8080            # PHP
+```
+
+Then open <http://localhost:8080> in your browser. Press `Ctrl+C` in the
+terminal to stop the server.
+
+### 3. Make your first piece
+
+1. Click **Choose File** and pick an image (a high-contrast portrait works
+   well).
+2. Keep the default settings and click **🎯 Generate String Art**.
+3. Watch the animation, or click **⏭️ Skip to End**.
+4. Download the instructions (TXT), the robot file (JSON), or the image (PNG).
+
+## Building the distributable
+
+You only need this to host the app as a single file. It requires Node.js 16
+or newer and has no npm dependencies.
+
+```bash
+node --version             # check Node.js is installed (v16+)
+./build_dist.sh            # or: node build.js
+```
+
+The result is in `dist/`. Test the build before deploying:
+
+```bash
+cd dist
+python3 -m http.server 8080
+# Visit http://localhost:8080
+```
+
+## Deploying
+
+Copy the single-file build to any web server or static host:
+
+```bash
+scp dist/index.html user@server:/var/www/html/stringart.html
+```
+
+Or copy the separate files, including the optional Apache configuration:
+
+```bash
+scp dist/index-separate.html dist/style.min.css dist/script.js \
+    dist/.htaccess dist/COPYING dist/COPYING.LESSER \
+    user@server:/var/www/html/stringart/
+```
+
+See [BUILD_GUIDE.md](BUILD_GUIDE.md) for more deployment options.
+
+---
 
 ## When to Use Each Algorithm
 

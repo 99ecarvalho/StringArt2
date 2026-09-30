@@ -56,8 +56,12 @@ class StringArtGenerator {
         // cannot desynchronize the pins from the sequence.
         this.gen = { ...this.params };
 
+        // Set while a sequence is being calculated
+        this.isGenerating = false;
+
         this.initializeEventListeners();
         this.setupCanvas();
+        this.updateAlgorithmUI();
     }
 
     initializeEventListeners() {
@@ -97,6 +101,11 @@ class StringArtGenerator {
                 if (!Number.isFinite(value)) return; // Field is empty or mid-edit
                 this.params[this.paramKey(param)] = value;
                 document.getElementById(param + 'Value').textContent = value;
+
+                // Opacity and weight only affect rendering: show the change now
+                if ((param === 'lineOpacity' || param === 'lineWeight') && !this.isAnimating) {
+                    this.redrawResult();
+                }
             });
         });
 
@@ -111,6 +120,21 @@ class StringArtGenerator {
         document.getElementById('exportInstructions').addEventListener('click', () => this.exportInstructions());
         document.getElementById('exportJSON').addEventListener('click', () => this.exportJSON());
         document.getElementById('exportImage').addEventListener('click', () => this.exportImage());
+    }
+
+    // Redraw the current result, unless there is none or it is being replaced
+    redrawResult() {
+        if (this.isGenerating || this.sequence.length === 0) return;
+        this.drawFrame();
+    }
+
+    // Enable or disable the playback and export controls. They are disabled
+    // during generation, when the sequence is incomplete and does not match
+    // the pins being built.
+    setResultControlsEnabled(enabled) {
+        ['playBtn', 'pauseBtn', 'resetBtn', 'skipBtn', 'exportInstructions', 'exportJSON', 'exportImage'].forEach(id => {
+            document.getElementById(id).disabled = !enabled;
+        });
     }
 
     // Map an input element id to its key in this.params
@@ -443,6 +467,8 @@ class StringArtGenerator {
         this.showStatus('Generating string art...', 'info', 0);
         generateBtn.disabled = true;
         this.pauseAnimation();
+        this.isGenerating = true;
+        this.setResultControlsEnabled(false);
 
         try {
             // Freeze the parameters for this run
@@ -465,6 +491,10 @@ class StringArtGenerator {
             } else {
                 await this.calculateSequenceGreedy();
             }
+
+            // The sequence is complete: playback and exports are safe again
+            this.isGenerating = false;
+            this.setResultControlsEnabled(true);
 
             if (this.sequence.length === 0) {
                 this.showStatus('No lines were generated. Try a lower Min Pin Distance or Darkness Threshold.', 'error');
@@ -490,6 +520,8 @@ class StringArtGenerator {
             console.error(err);
             this.showStatus(`Generation failed: ${err.message}`, 'error');
         } finally {
+            this.isGenerating = false;
+            this.setResultControlsEnabled(true);
             generateBtn.disabled = false;
         }
     }
@@ -779,7 +811,7 @@ class StringArtGenerator {
     }
 
     playAnimation() {
-        if (this.isAnimating) return;
+        if (this.isAnimating || this.isGenerating) return;
         if (this.animationIndex >= this.sequence.length) {
             this.animationIndex = 0; // Replay from the start when finished
         }
@@ -796,6 +828,7 @@ class StringArtGenerator {
     }
 
     resetAnimation() {
+        if (this.isGenerating) return;
         this.pauseAnimation();
         this.animationIndex = 0;
         this.drawFrame();
@@ -803,6 +836,7 @@ class StringArtGenerator {
     }
 
     skipToEnd() {
+        if (this.isGenerating) return;
         this.pauseAnimation();
         this.animationIndex = this.sequence.length;
         this.drawFrame();
@@ -990,7 +1024,7 @@ class StringArtGenerator {
     }
 
     exportInstructions() {
-        if (this.sequence.length === 0) return;
+        if (this.isGenerating || this.sequence.length === 0) return;
 
         // Calculate string length and time estimates
         const stats = this.calculateProjectStats();
@@ -1036,7 +1070,7 @@ class StringArtGenerator {
     }
 
     exportJSON() {
-        if (this.sequence.length === 0) return;
+        if (this.isGenerating || this.sequence.length === 0) return;
 
         const stats = this.calculateProjectStats();
 
@@ -1105,7 +1139,7 @@ class StringArtGenerator {
     }
 
     exportImage() {
-        if (this.sequence.length === 0) return;
+        if (this.isGenerating || this.sequence.length === 0) return;
 
         // Draw final image
         this.skipToEnd();

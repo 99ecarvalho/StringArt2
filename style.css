@@ -271,10 +271,6 @@ header .author {
     display: none;
 }
 
-.algorithm-select.greedy .greedy-only {
-    display: block;
-}
-
 .optimization-results {
     background: linear-gradient(135deg, rgba(147, 51, 234, 0.1), rgba(79, 70, 229, 0.1));
     border: 2px solid rgba(147, 51, 234, 0.3);

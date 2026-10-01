@@ -16,6 +16,7 @@
     <meta name="author" content="Eduardo Correia <ecorreia@apliant.com.br>">
     <meta name="description" content="Turn images into string art patterns with step-by-step instructions and robot-ready JSON.">
     <title>String Art Generator</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%A7%B5%3C/text%3E%3C/svg%3E">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -36,8 +37,53 @@
                 </div>
 
                 <div class="section">
+                    <h3>🖼️ Image Preparation</h3>
+
+                    <div class="param">
+                        <label for="fitMode">Fit:</label>
+                        <select id="fitMode" class="algorithm-select">
+                            <option value="cover">Fill the circle (crop)</option>
+                            <option value="contain">Fit whole image</option>
+                        </select>
+                    </div>
+
+                    <div class="param">
+                        <label for="zoom">Zoom:</label>
+                        <input type="range" id="zoom" value="1" min="1" max="3" step="0.05">
+                        <span class="value" id="zoomValue">1</span>
+                    </div>
+
+                    <div class="param">
+                        <label for="offsetX">Horizontal position (%):</label>
+                        <input type="range" id="offsetX" value="0" min="-100" max="100" step="1">
+                        <span class="value" id="offsetXValue">0</span>
+                    </div>
+
+                    <div class="param">
+                        <label for="offsetY">Vertical position (%):</label>
+                        <input type="range" id="offsetY" value="0" min="-100" max="100" step="1">
+                        <span class="value" id="offsetYValue">0</span>
+                    </div>
+
+                    <div class="param">
+                        <label for="contrast">Contrast:</label>
+                        <input type="range" id="contrast" value="0" min="-100" max="100" step="1">
+                        <span class="value" id="contrastValue">0</span>
+                    </div>
+
+                    <div class="param">
+                        <label for="gamma">Gamma:</label>
+                        <input type="range" id="gamma" value="1" min="0.4" max="2.5" step="0.05">
+                        <span class="value" id="gammaValue">1</span>
+                        <small class="param-hint">Above 1 darkens the midtones (more string), below 1 lightens them</small>
+                    </div>
+
+                    <button id="resetPrepBtn" class="btn btn-small">↺ Reset image preparation</button>
+                </div>
+
+                <div class="section">
                     <h3>⚙️ Parameters</h3>
-                    
+
                     <div class="param">
                         <label for="algorithm">Algorithm:</label>
                         <select id="algorithm" class="algorithm-select">
@@ -63,11 +109,11 @@
 
                     <div class="algorithm-info" id="algorithmInfo">
                         <p class="info-text">
-                            <strong>Greedy:</strong> Iteratively selects lines that best match dark areas. 
+                            <strong>Greedy:</strong> Iteratively selects lines that best match dark areas.
                             Excellent for portraits and photos.
                         </p>
                     </div>
-                    
+
                     <div class="algorithm-note radon-only" id="radonNote" style="display: none;">
                         <p>⚠️ <strong>Radon Transform uses:</strong></p>
                         <ul>
@@ -76,13 +122,13 @@
                             <li>✅ Iterations (max lines)</li>
                             <li>✅ Line Opacity & Weight</li>
                             <li>✅ Darkness Threshold (to stop)</li>
-                            <li>🔬 Radon Angles (new!)</li>
+                            <li>🔬 Radon Angles</li>
                         </ul>
                         <p><small>All parameters work together for best results</small></p>
                     </div>
-                    
+
                     <div class="param">
-                        <label for="radius">Radius (pixels):</label>
+                        <label for="radius">Resolution (radius in pixels):</label>
                         <input type="number" id="radius" value="300" min="100" max="600" step="10">
                         <span class="value" id="radiusValue">300</span>
                     </div>
@@ -94,7 +140,15 @@
                     </div>
 
                     <div class="param">
-                        <label for="iterations">String Iterations:</label>
+                        <label for="pinStart">Pin 0 position:</label>
+                        <select id="pinStart" class="algorithm-select">
+                            <option value="right">3 o'clock (right)</option>
+                            <option value="top">12 o'clock (top)</option>
+                        </select>
+                    </div>
+
+                    <div class="param">
+                        <label for="iterations">String Iterations (max lines):</label>
                         <input type="number" id="iterations" value="3000" min="500" max="10000" step="100">
                         <span class="value" id="iterationsValue">3000</span>
                     </div>
@@ -130,13 +184,34 @@
                         <span class="value" id="anglesValue">180</span>
                         <small class="param-hint">Number of angle samples (more = finer detail, slower)</small>
                     </div>
-                    
-                    <button id="generateBtn" class="btn primary">🎯 Generate String Art</button>
+
+                    <div class="button-group">
+                        <button id="generateBtn" class="btn primary">🎯 Generate String Art</button>
+                        <button id="cancelBtn" class="btn" style="display: none;">✖ Cancel</button>
+                    </div>
+                    <progress id="generationProgress" max="100" value="0" style="display: none;" aria-label="Generation progress"></progress>
+                </div>
+
+                <div class="section">
+                    <h3>📏 Physical Board</h3>
+
+                    <div class="param">
+                        <label for="pinCircleDiameter">Pin circle diameter (cm):</label>
+                        <input type="number" id="pinCircleDiameter" value="60" min="10" max="300" step="1">
+                        <span class="value" id="pinCircleDiameterValue">60</span>
+                    </div>
+
+                    <div class="param">
+                        <label for="nailDiameter">Nail diameter (mm):</label>
+                        <input type="number" id="nailDiameter" value="1.5" min="0.5" max="6" step="0.1">
+                        <span class="value" id="nailDiameterValue">1.5</span>
+                        <small class="param-hint">Used for the pin template and for the thread that wraps around each nail</small>
+                    </div>
                 </div>
 
                 <div class="section" id="animationSection" style="display: none;">
                     <h3>🎬 Animation</h3>
-                    
+
                     <div class="param">
                         <label for="animationSpeed">Speed (lines/frame):</label>
                         <input type="range" id="animationSpeed" value="10" min="1" max="100" step="1">
@@ -163,11 +238,17 @@
                     <button id="exportInstructions" class="btn">📋 Download Instructions (TXT)</button>
                     <button id="exportJSON" class="btn">💾 Download Robot JSON</button>
                     <button id="exportImage" class="btn">🖼️ Save as Image</button>
+                    <button id="exportTemplate" class="btn">📐 Download Pin Template (SVG)</button>
+                    <small class="param-hint">Print the template at 100% scale and tape it to the board to mark the nails.</small>
                 </div>
 
                 <div class="section" id="statsSection" style="display: none;">
                     <h3>📊 Project Statistics</h3>
                     <div class="stats-grid">
+                        <div class="stat-item">
+                            <span class="stat-label">🎯 Match to Target:</span>
+                            <span class="stat-value" id="matchScore">-</span>
+                        </div>
                         <div class="stat-item">
                             <span class="stat-label">🧵 String Required:</span>
                             <span class="stat-value" id="stringLength">-</span>
@@ -189,8 +270,12 @@
                             <span class="stat-value" id="sessions">-</span>
                         </div>
                         <div class="stat-item">
-                            <span class="stat-label">📐 Physical Size:</span>
+                            <span class="stat-label">📐 Pin Circle:</span>
                             <span class="stat-value" id="physicalSize">-</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">📍 Pin Spacing:</span>
+                            <span class="stat-value" id="pinSpacing">-</span>
                         </div>
                     </div>
                     <div class="info-box">
@@ -207,10 +292,17 @@
 
             <!-- Canvas Panel -->
             <div class="canvas-panel">
-                <div class="canvas-container">
-                    <canvas id="mainCanvas"></canvas>
+                <div class="canvas-pair">
+                    <figure class="canvas-container">
+                        <canvas id="mainCanvas"></canvas>
+                        <figcaption>String art</figcaption>
+                    </figure>
+                    <figure class="canvas-container target-container">
+                        <canvas id="targetCanvas"></canvas>
+                        <figcaption>Target (what the algorithm aims for)</figcaption>
+                    </figure>
                 </div>
-                <div id="statusMessage"></div>
+                <div id="statusMessage" role="status" aria-live="polite"></div>
             </div>
         </div>
 
@@ -227,6 +319,7 @@
         </footer>
     </div>
 
+    <script src="stringart-core.js"></script>
     <script src="script.js"></script>
 </body>
 </html>

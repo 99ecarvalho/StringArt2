@@ -1,0 +1,110 @@
+STRING ART GENERATOR - BEST SETTINGS TO START FROM
+==================================================
+String Art Generator - (c) 2025-2026 Eduardo Correia <ecorreia@apliant.com.br>
+
+These settings were found by running the generator on assets/einstein.jpg
+with every combination of pins, opacity, line weight, minimum distance and
+(for Radon) threshold, and ranking the results by the "Match to Target"
+score. About 1,700 runs in total, confirmed at the default resolution
+(radius 300).
+
+Use them as a starting point for your own images: every image is different,
+so experiment from here.
+
+
+HOW TO USE
+----------
+1. Open index.html and upload assets/einstein.jpg (or your own image).
+2. Leave Image Preparation at its defaults: Fit "Fill the circle (crop)",
+   Zoom 1, positions 0, Contrast 0, Gamma 1.
+3. Set the Parameters below. Settings not listed keep their defaults
+   (Resolution 300, Pin 0 position 3 o'clock, Radon Angles 180).
+4. Set String Iterations to 10000. It is only an upper limit: both
+   algorithms stop by themselves when more string would not help.
+5. Click Generate String Art.
+
+
+GREEDY
+------
+                      Best quality    Balanced        Beginner
+Number of Pins        500             500             200
+Line Opacity (%)      5               8               10
+Line Weight (px)      2               2               2
+Min Pin Distance      30              20              20
+String Iterations     10000           10000           10000
+
+Result on Einstein    90.9% match     89.9% match     87.9% match
+                      5,467 lines     3,458 lines     2,750 lines
+                      2,431 m thread
+
+Thread lengths are for a 60 cm pin circle with 1.5 mm nails.
+
+
+RADON TRANSFORM
+---------------
+                      Best quality    Balanced        Beginner
+Number of Pins        500             500             200
+Line Opacity (%)      6               8               10
+Line Weight (px)      2               2               2
+Min Pin Distance      20              20              10
+Darkness Threshold    4               4               4
+Radon Angles          180             180             180
+String Iterations     10000           10000           10000
+
+Result on Einstein    90.7% match     90.0% match     88.3% match
+                      4,640 lines     3,462 lines     2,789 lines
+                      2,040 m thread
+
+The "Best quality" figures come from the app itself; the others from the
+same algorithm run outside the browser, and can differ by a few lines.
+
+
+WHICH ONE TO PICK
+-----------------
+- Best quality: the highest match score. Many nails and many lines: a long
+  build by hand, fine for a robot.
+- Balanced: almost the same quality with about a third fewer lines.
+- Beginner: 200 nails and under 3,000 lines. The easiest to build by hand,
+  and still clearly recognizable.
+
+The rendered results of the "Best quality" settings are in this folder:
+  einstein_greedy.png   Greedy, best quality
+  einstein_radon.png    Radon Transform, best quality
+
+
+WHAT THE SEARCH SHOWED
+----------------------
+- Many faint lines beat few dark ones: the score falls steadily as the
+  opacity rises, from the best results at 5-10% to the worst at 30%.
+- More pins help, but slowly: 200 pins reach about 88%, 500 pins about 91%.
+- At resolution 300, a line weight of 2 px gives the best balance of quality
+  and line count. At a lower resolution, use a proportionally thinner line
+  (for example 1-1.5 px at resolution 200).
+- Min Pin Distance hardly matters between 10 and 30.
+- Radon Transform: keep the Darkness Threshold low (2-8). Higher values stop
+  the generation too early on portraits.
+- Greedy and Radon end up within about 0.5% of each other. Radon usually
+  needs fewer lines for the same score and gives a little more contrast;
+  Greedy renders smoother tones.
+
+
+TIPS FOR YOUR OWN IMAGES
+------------------------
+- Fill the circle with the subject. Use Zoom and the position sliders until
+  the face (or object) nearly touches the edge of the target preview.
+- Flat-looking photo: raise Contrast to 20-40.
+- Result too light or too dark overall: adjust Gamma (above 1 = darker
+  midtones, more string; below 1 = lighter).
+- The match score only compares runs made with the same image preparation.
+  After changing contrast, gamma or the crop, compare the images by eye.
+- Try a quick run at Resolution 200 to test ideas, then generate the final
+  version at 300.
+
+
+IMAGE CREDIT
+------------
+einstein.jpg: Albert Einstein, 1947, photograph by Orren Jack Turner,
+Princeton, N.J. Public domain in the United States (published 1931-1963,
+copyright not renewed). Source: Wikimedia Commons,
+https://commons.wikimedia.org/wiki/File:Albert_Einstein_Head.jpg
+Cropped and resized to 1200 x 1200 for this project.

@@ -1,0 +1,20 @@
+{
+  "name": "string-art-generator",
+  "version": "2.1.0",
+  "description": "Turn images into string art patterns, with step-by-step instructions, robot-ready JSON and a printable pin template.",
+  "private": true,
+  "license": "LGPL-3.0-or-later",
+  "author": "Eduardo Correia <ecorreia@apliant.com.br>",
+  "keywords": ["string-art", "thread-art", "radon-transform", "generative-art", "canvas"],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node serve.js",
+    "serve": "node serve.js",
+    "serve:dist": "node serve.js dist",
+    "build": "node build.js",
+    "test": "node --test tests/core.test.js",
+    "check": "node --check stringart-core.js && node --check script.js && node --check build.js && node --check serve.js"
+  }
+}

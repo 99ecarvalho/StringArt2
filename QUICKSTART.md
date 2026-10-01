@@ -3,6 +3,7 @@
 Copyright (c) 2025-2026 Eduardo Correia <ecorreia@apliant.com.br>
 
 - [Getting it running](#getting-it-running)
+- [Running the tests](#running-the-tests)
 - [Building the distributable](#building-the-distributable)
 - [Deploying](#deploying)
 - [Choosing an algorithm](#when-to-use-each-algorithm)
@@ -32,11 +33,16 @@ start index.html           # Windows (cmd or PowerShell)
 
 **Option B: serve it locally** (closest to how it runs once deployed)
 
-Use whichever of these you already have:
+With Node.js 18 or newer, use the built-in server (no `npm install` needed):
+
+```bash
+npm start                        # or: node serve.js
+```
+
+Or use whichever of these you already have:
 
 ```bash
 python3 -m http.server 8080      # Python 3
-npx --yes serve -l 8080 .        # Node.js
 php -S localhost:8080            # PHP
 ```
 
@@ -47,26 +53,35 @@ terminal to stop the server.
 
 1. Click **Choose File** and pick an image (a high-contrast portrait works
    well).
-2. Keep the default settings and click **🎯 Generate String Art**.
-3. Watch the animation, or click **⏭️ Skip to End**.
-4. Download the instructions (TXT), the robot file (JSON), or the image (PNG).
+2. Check the target preview next to the canvas. Use **Zoom** and the
+   position sliders to frame the subject.
+3. Keep the default settings and click **🎯 Generate String Art**.
+4. Watch the animation, or click **⏭️ Skip to End**.
+5. Set your board's **pin circle diameter** and **nail diameter**.
+6. Download the instructions (TXT), the robot file (JSON), the image (PNG),
+   or the printable pin template (SVG).
+
+## Running the tests
+
+```bash
+npm test                   # tests for the algorithms (node:test, no dependencies)
+npm run check              # syntax check of every script
+```
 
 ## Building the distributable
 
-You only need this to host the app as a single file. It requires Node.js 16
+You only need this to host the app as a single file. It requires Node.js 18
 or newer and has no npm dependencies.
 
 ```bash
-node --version             # check Node.js is installed (v16+)
-./build_dist.sh            # or: node build.js
+node --version             # check Node.js is installed (v18+)
+npm run build              # or: ./build_dist.sh, or node build.js
 ```
 
 The result is in `dist/`. Test the build before deploying:
 
 ```bash
-cd dist
-python3 -m http.server 8080
-# Visit http://localhost:8080
+npm run serve:dist         # serves dist/ on http://localhost:8080
 ```
 
 ## Deploying
@@ -80,7 +95,7 @@ scp dist/index.html user@server:/var/www/html/stringart.html
 Or copy the separate files, including the optional Apache configuration:
 
 ```bash
-scp dist/index-separate.html dist/style.min.css dist/script.js \
+scp dist/index-separate.html dist/style.min.css dist/stringart-core.js dist/script.js \
     dist/.htaccess dist/COPYING dist/COPYING.LESSER \
     user@server:/var/www/html/stringart/
 ```
@@ -163,9 +178,11 @@ Darkness Threshold: 16 (default)
 ### GREEDY Parameters:
 
 **Iterations** (500-10,000)
-- 1000-2000: Light sketch
-- 2500-4000: Balanced (recommended)
-- 5000+: Very dark, detailed
+- The maximum number of lines. Greedy stops by itself once another line
+  would no longer improve the match, often before the limit
+- 1000-2000: Quick sketch or preview
+- 3000-4000: Balanced (recommended)
+- 5000+: Only matters for very dark or detailed images
 
 **Line Opacity** (5-50%)
 - 10-15%: Very light, delicate
@@ -214,14 +231,16 @@ Pins, opacity, min pin distance, and line weight work as in Greedy.
    - Note what works for your images
 
 3. **Image Preparation**
-   - High contrast works better
-   - Convert to black & white beforehand
-   - Crop to focus on subject
+   - High contrast works better: raise **Contrast** if the target looks flat
+   - Raise **Gamma** above 1 for darker midtones (more string)
+   - Use **Zoom** and the position sliders to crop to the subject
+   - Compare settings with the **Match to Target** score
 
 4. **Performance**
    - Generation time grows with pins × iterations
    - Radon adds a short precomputation step
-   - Use fewer iterations for quick previews
+   - Use fewer iterations or a lower resolution for quick previews
+   - Generation runs in the background; press **Cancel** to stop it
 
 5. **Artistic Freedom**
    - No "right" settings

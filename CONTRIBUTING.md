@@ -20,10 +20,9 @@ a change merged with as little back-and-forth as possible.
   welcome. The user guides are [README.md](README.md),
   [QUICKSTART.md](QUICKSTART.md), [ALGORITHMS.md](ALGORITHMS.md), and
   [RADON_EXPLAINED.md](RADON_EXPLAINED.md).
-- **Improve the algorithms.** Better line scoring, faster generation (for
-  example, moving the work into a Web Worker), and new algorithms are all
-  useful. Please include before/after images with the same input and
-  parameters.
+- **Improve the algorithms.** Better line scoring, faster generation, and
+  new algorithms are all useful. Please include before/after images and
+  match scores with the same input and parameters.
 - **Test on your browser and device.** Reports from mobile browsers and
   low-end hardware help a lot.
 - **Share results.** Physical pieces built from the exported instructions, or
@@ -49,41 +48,47 @@ provide.
 ## Development setup
 
 The application is plain HTML, CSS, and JavaScript with no runtime
-dependencies and no framework. You only need a modern browser. Node.js 16 or
-newer is needed for the build script.
+dependencies and no framework. You only need a modern browser. Node.js 18 or
+newer is needed for the tests, the build script, and the local server; there
+is nothing to `npm install`.
 
 ```bash
 git clone <repository-url> string-art-generator
 cd string-art-generator
-python3 -m http.server 8080      # or open index.html directly
-# Visit http://localhost:8080
+npm start                        # serves http://localhost:8080 (or open index.html directly)
+npm test                         # runs the tests
 ```
 
 The source files are:
 
-| File         | Purpose                                              |
-| ------------ | ------- |
-| `index.html` | Page layout and controls                             |
-| `style.css`  | Styles                                               |
-| `script.js`  | The `StringArtGenerator` class: algorithms, animation, statistics, exports |
-| `build.js`   | Bundles the app into `dist/`; see [BUILD_GUIDE.md](BUILD_GUIDE.md) |
+| File | Purpose |
+| ---- | ------- |
+| `index.html` | Page layout and controls |
+| `style.css` | Styles |
+| `stringart-core.js` | Pin geometry, image-to-darkness conversion, line rasterization, both algorithms, image analysis, statistics, and the export formats. No DOM access |
+| `script.js` | The `StringArtGenerator` class: controls, image preparation, running the generator in a Web Worker, animation, and downloads |
+| `tests/core.test.js` | Tests for `stringart-core.js` (`node:test`) |
+| `build.js` | Bundles the app into `dist/`; see [BUILD_GUIDE.md](BUILD_GUIDE.md) |
+| `serve.js` | Local static server used by `npm start` |
 
 ### Testing your change
 
-There is no automated test suite yet (contributions welcome!). Before opening
-a pull request:
+Before opening a pull request:
 
-1. Check the script parses: `node --check script.js && node --check build.js`.
+1. Run `npm run check` (syntax) and `npm test`. **Add a test** to
+   `tests/core.test.js` for a bug fix (one that fails without the fix) or a
+   new feature of the core.
 2. Open `index.html` in a browser, upload an image, and generate with **both**
-   algorithms. Confirm the animation, the statistics, and all three exports
-   (TXT, JSON, PNG) still work, with no errors in the developer console.
+   algorithms. Confirm the animation, the statistics, Cancel, and all four
+   exports (TXT, JSON, PNG, SVG template) still work, with no errors in the
+   developer console.
 3. Try the edge cases your change could affect: very small and very large
-   pin counts, a high Min Pin Distance, and changing parameters after a
-   generation.
-4. Run `./build_dist.sh` and check that `dist/index.html` behaves the same as
-   the source version.
-5. If you changed the output of an algorithm, attach before/after images to
-   the pull request.
+   pin counts, a high Min Pin Distance, non-square images with each fit
+   mode, and changing parameters after a generation.
+4. Run `npm run build` and check that `dist/index.html` behaves the same as
+   the source version, including when opened directly from disk.
+5. If you changed the output of an algorithm, attach before/after images and
+   the match scores to the pull request.
 
 Describe what you tested in the pull request.
 
@@ -111,15 +116,20 @@ Follow the style of the surrounding code:
 - 4-space indentation, no tabs, semicolons, and single quotes.
 - `camelCase` for methods and variables, `PascalCase` for classes, and
   `UPPER_CASE` for constants.
-- Keep the application logic inside the `StringArtGenerator` class.
-- Algorithms read parameters from `this.gen` (the snapshot taken when
-  generation starts), not from `this.params`, so that editing the inputs
-  during or after a run cannot desynchronize the pins and the sequence.
-- Long-running loops must yield to the browser regularly (see
-  `calculateSequenceGreedy()`) so the page stays responsive.
+- Keep `stringart-core.js` free of DOM access and top-level state: it also
+  runs in a Web Worker, which is built from `StringArtCore.factory.toString()`,
+  so everything it uses must be defined inside the factory function.
+- Keep page logic in the `StringArtGenerator` class in `script.js`.
+- A generation works on a copy of the parameters taken when it starts, and
+  replaces `this.result` only when it finishes, so editing the inputs during
+  or after a run can never mix the pins of one run with the sequence of
+  another.
+- Long-running work belongs in the core, driven through `createRun().step()`,
+  so it can run in the worker and report progress.
 - Don't insert untrusted text (file names, image data) into the page with
   `innerHTML`; use `textContent`.
-- Comment the *why* of non-obvious math, as in `calculateRadonTransform()`.
+- Comment the *why* of non-obvious math, as in `radonTransform()` and
+  `rasterizeLine()`.
 
 New source files start with this header (adapt the comment syntax to the
 file type):
@@ -168,9 +178,10 @@ application working.
 
 Before you open a pull request, check that:
 
+- [ ] `npm run check` and `npm test` pass;
 - [ ] both algorithms still generate, animate, and export correctly;
 - [ ] there are no new errors or warnings in the browser console;
-- [ ] `./build_dist.sh` succeeds and `dist/index.html` works;
+- [ ] `npm run build` succeeds and `dist/index.html` works;
 - [ ] documentation and in-page hints reflect any change in behavior;
 - [ ] new files carry the copyright and SPDX header;
 - [ ] commits follow the commit message convention.

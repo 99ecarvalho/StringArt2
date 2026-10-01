@@ -22,7 +22,7 @@ For each iteration:
      d. Combine: 70% Radon + 30% pixels
   2. Stop if the best score is below the Darkness Threshold
   3. Choose the best line
-  4. Lighten its pixels in the working image (as in Greedy)
+  4. Draw it into the simulated rendering (as in Greedy)
   5. Move to the new pin
 ```
 
@@ -31,8 +31,9 @@ For each iteration:
 ```javascript
 finalScore = 0.7 × radonScore + 0.3 × pixelScore
 
-pixelScore = mean remaining darkness along the line (working image)
-remaining  = pixelScore / mean darkness along the line in the original image
+pixelScore = mean residual along the line: target darkness minus the
+             darkness already rendered by earlier strings
+remaining  = pixelScore / mean target darkness along the line
 radonScore = projection value for the line × remaining
 ```
 
@@ -49,7 +50,7 @@ Every parameter is used:
 | **Number of Pins** | Defines the available pins |
 | **Min Pin Distance** | Skips lines between nearby pins |
 | **Iterations** | Maximum number of lines |
-| **Line Opacity** | How much each line lightens the working image, and the drawing opacity |
+| **Line Opacity** | How much each line darkens the pixels it crosses, in the model and on the canvas |
 | **Darkness Threshold** | Stops once no line is darker than this on average (default 16) |
 | **Line Weight** | Visual thickness of the lines |
 | **Radon Angles** | Angular resolution of the projections |
@@ -88,7 +89,7 @@ on the circle. Each pin-to-pin line is matched to the nearest sampled angle.
 
 ```javascript
 for each candidate pin:
-  score = sum of remaining darkness along the line
+  score = how much the line reduces the squared error between target and rendering
 choose the best score
 ```
 
@@ -98,7 +99,7 @@ choose the best score
 precompute: Radon projections at every angle
 
 for each candidate pin:
-  pixelScore = mean remaining darkness along the line
+  pixelScore = mean residual (target - rendered) along the line
   radonScore = projection value for this line × share of darkness left
   score = 0.7 * radonScore + 0.3 * pixelScore
 stop if the best score < threshold
@@ -197,15 +198,16 @@ The projections are computed once, from the original image. If they were
 used as they are, a line through a dark area would keep its high Radon score
 however many strings already cover that area, and the same lines would be
 drawn over and over. Scaling each projection by the share of the line's
-original darkness that remains in the working image makes the Radon score
+original darkness still missing from the rendering makes the Radon score
 fade exactly as the pixels do, whichever strings covered them.
 
 ### Difference from Greedy
 
-Greedy scores a line by the **sum** of the darkness along it, which favors
-long lines through the middle of the circle. The Radon mode uses **means**,
-so short lines along dark edges compete on equal terms. Together with the
-threshold, this gives the Radon mode its higher-contrast, sparser look.
+Greedy scores a line by the total reduction in error along it, a **sum**
+over its pixels, which favors long lines through the middle of the circle.
+The Radon mode uses **means**, so short lines along dark edges compete on
+equal terms. Together with the threshold, this gives the Radon mode its
+higher-contrast, sparser look.
 
 ## ✨ Summary
 

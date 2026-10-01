@@ -2,18 +2,25 @@
 
 Copyright (c) 2025-2026 Eduardo Correia <ecorreia@apliant.com.br>
 
-The application needs no build step: `index.html`, `style.css`, and
-`script.js` run as they are. The build script only packages them for hosting.
+The application needs no build step: `index.html`, `style.css`,
+`stringart-core.js`, and `script.js` run as they are. The build script only
+packages them for hosting.
 
 ## 📂 Project structure
 
 ```text
 StringArt2/
 ├── index.html          # Page layout and controls
-├── script.js           # Application logic (StringArtGenerator class)
+├── stringart-core.js   # Algorithms, statistics, exports (no DOM; also runs in a Web Worker and Node)
+├── script.js           # User interface (StringArtGenerator class)
 ├── style.css           # Styles
+├── package.json        # npm scripts (no dependencies)
 ├── build.js            # Packages the app into dist/
 ├── build_dist.sh       # Runs build.js from any directory
+├── serve.js            # Local static server for testing
+├── tests/              # Node tests for stringart-core.js
+├── docs/images/        # README screenshot
+├── assets/             # Example portrait, results, and best-settings.txt
 ├── deploy/
 │   └── .htaccess       # Optional Apache configuration, copied into dist/
 ├── COPYING             # GNU GPL v3
@@ -22,7 +29,8 @@ StringArt2/
     ├── index.html              # All-in-one file (recommended)
     ├── index-separate.html     # Page that loads the files below
     ├── style.min.css           # Minified CSS
-    ├── script.js               # Script, unmodified
+    ├── stringart-core.js       # Algorithms, unmodified
+    ├── script.js               # User interface, unmodified
     ├── .htaccess
     ├── COPYING
     └── COPYING.LESSER
@@ -30,9 +38,11 @@ StringArt2/
 
 ## 🔨 Building
 
-You need Node.js 16 or newer. There are no npm dependencies.
+You need Node.js 18 or newer. There are no npm dependencies.
 
 ```bash
+npm run build
+# or
 ./build_dist.sh
 # or
 node build.js
@@ -45,6 +55,9 @@ The build:
 - minifies the CSS and adds a one-line copyright and license banner;
 - copies the JavaScript **unchanged**. It is not minified or obfuscated, so
   the code users run is the same code they can read and modify;
+- keeps the generator working in the single file: the Web Worker is built at
+  run time from the inlined `stringart-core.js`, so no separate worker file
+  is needed;
 - copies `deploy/.htaccess` and the license files into `dist/`.
 
 `dist/` is deleted and recreated on every build.
@@ -61,7 +74,7 @@ scp dist/index.html user@server:/var/www/html/stringart.html
 
 ```bash
 cd dist
-scp index-separate.html style.min.css script.js .htaccess COPYING COPYING.LESSER \
+scp index-separate.html style.min.css stringart-core.js script.js .htaccess COPYING COPYING.LESSER \
     user@server:/var/www/html/stringart/
 ```
 
@@ -76,8 +89,7 @@ Publish either `dist/` or the repository root.
 ### Option 4: Test locally first
 
 ```bash
-cd dist
-python3 -m http.server 8080
+npm run serve:dist
 # Visit http://localhost:8080
 ```
 
@@ -95,9 +107,9 @@ Other web servers ignore it.
 
 ## 🔧 Modifying & rebuilding
 
-1. Edit `index.html`, `script.js`, or `style.css`.
-2. Test by opening `index.html` in a browser.
-3. Run `./build_dist.sh`.
+1. Edit `index.html`, `stringart-core.js`, `script.js`, or `style.css`.
+2. Run `npm test` and test by opening `index.html` in a browser.
+3. Run `npm run build`.
 4. Test `dist/index.html`.
 5. Deploy.
 

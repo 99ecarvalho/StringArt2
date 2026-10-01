@@ -1,5 +1,9 @@
 /**
- * String Art Generator - Main Script
+ * String Art Generator - User interface
+ *
+ * Page logic: controls, image preparation, running the generator (in a Web
+ * Worker when possible), animation, statistics and downloads. The
+ * algorithms live in stringart-core.js.
  *
  * Copyright (c) 2025-2026 Eduardo Correia <ecorreia@apliant.com.br>
  *
@@ -10,71 +14,97 @@
  * SPDX-License-Identifier: LGPL-3.0-or-later
  */
 
-const APP_NAME = 'String Art Generator';
-const APP_AUTHOR = 'Eduardo Correia <ecorreia@apliant.com.br>';
-const APP_LICENSE = 'LGPL-3.0-or-later';
+/* global StringArtCore */
+
+const core = StringArtCore;
+
+// Every input the page reads. `kind` is how its value is parsed; the flags
+// say what a change affects:
+//   render:   only how the result is drawn (redraw, no regeneration)
+//   prep:     image preparation (refresh the target preview)
+//   physical: physical board size (refresh statistics)
+const PARAM_DEFS = [
+    { id: 'algorithm', key: 'algorithm', kind: 'select' },
+    { id: 'radius', key: 'radius', kind: 'int', prep: true },
+    { id: 'pins', key: 'numPins', kind: 'int' },
+    { id: 'pinStart', key: 'pinStart', kind: 'select' },
+    { id: 'iterations', key: 'iterations', kind: 'int' },
+    { id: 'lineOpacity', key: 'lineOpacity', kind: 'float', render: true },
+    { id: 'minDistance', key: 'minDistance', kind: 'int' },
+    { id: 'threshold', key: 'threshold', kind: 'int' },
+    { id: 'lineWeight', key: 'lineWeight', kind: 'float', render: true },
+    { id: 'angles', key: 'radonAngles', kind: 'int' },
+    { id: 'animationSpeed', key: 'animationSpeed', kind: 'int' },
+    { id: 'fitMode', key: 'fitMode', kind: 'select', prep: true },
+    { id: 'zoom', key: 'zoom', kind: 'float', prep: true },
+    { id: 'offsetX', key: 'offsetX', kind: 'float', prep: true },
+    { id: 'offsetY', key: 'offsetY', kind: 'float', prep: true },
+    { id: 'contrast', key: 'contrast', kind: 'int', prep: true },
+    { id: 'gamma', key: 'gamma', kind: 'float', prep: true },
+    { id: 'pinCircleDiameter', key: 'pinCircleDiameterCm', kind: 'float', physical: true },
+    { id: 'nailDiameter', key: 'nailDiameterMm', kind: 'float', physical: true }
+];
+
+const PREP_DEFAULTS = { fitMode: 'cover', zoom: 1, offsetX: 0, offsetY: 0, contrast: 0, gamma: 1 };
+
+const SETTINGS_KEY = 'stringArtGenerator.settings.v1';
+
+// Blank space around the pin circle on the result canvas, in pixels
+const CANVAS_MARGIN = 50;
 
 class StringArtGenerator {
     constructor() {
         this.image = null;
-        this.imageData = null;
-        this.grayscaleData = null;
-        this.pins = [];
-        this.sequence = [];
+        this.imageName = 'string-art';
         this.canvas = document.getElementById('mainCanvas');
         this.ctx = this.canvas.getContext('2d');
+        this.targetCanvas = document.getElementById('targetCanvas');
+        this.targetCtx = this.targetCanvas.getContext('2d');
+
+        // Last completed generation: { params, pins, radius, size, sequence, rmse, stopReason }
+        this.result = null;
 
         // Animation state
         this.animationIndex = 0;
         this.isAnimating = false;
         this.animationFrameId = null;
 
-        // Optimization state
-        this.imageAnalysis = null;
+        // Running generation, with a cancel() method
+        this.job = null;
+
         this.suggestedParams = null;
-
-        // Status message timer
         this.statusTimer = null;
+        this.targetFrame = null;
 
-        // Parameters
-        this.params = {
-            algorithm: 'greedy',
-            radius: 300,
-            numPins: 200,
-            iterations: 3000,
-            lineOpacity: 20,
-            minDistance: 20,
-            threshold: 16,
-            lineWeight: 1,
-            animationSpeed: 10,
-            // Radon-specific parameters
-            radonAngles: 180
-        };
-
-        // Snapshot of the parameters used for the last generation. Geometry,
-        // statistics and exports use it, so editing the inputs afterwards
-        // cannot desynchronize the pins from the sequence.
-        this.gen = { ...this.params };
-
-        // Set while a sequence is being calculated
-        this.isGenerating = false;
+        this.params = {};
+        this.restoreSettings();
+        this.readParams();
 
         this.initializeEventListeners();
-        this.setupCanvas();
         this.updateAlgorithmUI();
+        this.clearCanvas();
     }
 
+    // ------------------------------------------------------------------
+    // Parameters and settings
+    // ------------------------------------------------------------------
+
     initializeEventListeners() {
-        // Image upload
         document.getElementById('imageInput').addEventListener('change', (e) => this.handleImageUpload(e));
 
-        // Algorithm selection
-        document.getElementById('algorithm').addEventListener('change', (e) => {
-            this.params.algorithm = e.target.value;
-            this.updateAlgorithmUI();
+        PARAM_DEFS.forEach(def => {
+            const el = document.getElementById(def.id);
+            const eventName = def.kind === 'select' ? 'change' : 'input';
+            el.addEventListener(eventName, () => this.onParamInput(def));
+            // Clamp typed numbers once editing is finished
+            if (el.type === 'number') {
+                el.addEventListener('change', () => {
+                    this.readParams();
+                    this.saveSettings();
+                });
+            }
         });
 
-        // Auto-optimize checkbox
         document.getElementById('autoOptimizeCheck').addEventListener('change', (e) => {
             if (e.target.checked) {
                 this.analyzeImageAndSuggest();
@@ -82,99 +112,119 @@ class StringArtGenerator {
                 document.getElementById('optimizationResults').style.display = 'none';
             }
         });
-
-        // Optimization buttons
         document.getElementById('applyOptimization').addEventListener('click', () => this.applyOptimizedParams());
         document.getElementById('dismissOptimization').addEventListener('click', () => {
             document.getElementById('optimizationResults').style.display = 'none';
             document.getElementById('autoOptimizeCheck').checked = false;
         });
+        document.getElementById('resetPrepBtn').addEventListener('click', () => this.resetImagePreparation());
 
-        // Parameter updates
-        const params = ['radius', 'pins', 'iterations', 'lineOpacity', 'minDistance', 'threshold', 'lineWeight', 'animationSpeed', 'angles'];
-        params.forEach(param => {
-            const element = document.getElementById(param);
-            if (!element) return;
-
-            element.addEventListener('input', (e) => {
-                const value = parseFloat(e.target.value);
-                if (!Number.isFinite(value)) return; // Field is empty or mid-edit
-                this.params[this.paramKey(param)] = value;
-                document.getElementById(param + 'Value').textContent = value;
-
-                // Opacity and weight only affect rendering: show the change now
-                if ((param === 'lineOpacity' || param === 'lineWeight') && !this.isAnimating) {
-                    this.redrawResult();
-                }
-            });
-        });
-
-        // Control buttons
         document.getElementById('generateBtn').addEventListener('click', () => this.generate());
+        document.getElementById('cancelBtn').addEventListener('click', () => this.cancelGeneration());
         document.getElementById('playBtn').addEventListener('click', () => this.playAnimation());
         document.getElementById('pauseBtn').addEventListener('click', () => this.pauseAnimation());
         document.getElementById('resetBtn').addEventListener('click', () => this.resetAnimation());
         document.getElementById('skipBtn').addEventListener('click', () => this.skipToEnd());
 
-        // Export buttons
         document.getElementById('exportInstructions').addEventListener('click', () => this.exportInstructions());
         document.getElementById('exportJSON').addEventListener('click', () => this.exportJSON());
         document.getElementById('exportImage').addEventListener('click', () => this.exportImage());
+        document.getElementById('exportTemplate').addEventListener('click', () => this.exportTemplate());
     }
 
-    // Redraw the current result, unless there is none or it is being replaced
-    redrawResult() {
-        if (this.isGenerating || this.sequence.length === 0) return;
-        this.drawFrame();
+    onParamInput(def) {
+        const el = document.getElementById(def.id);
+        if (def.kind === 'select') {
+            this.params[def.key] = el.value;
+        } else {
+            const value = parseFloat(el.value);
+            if (!Number.isFinite(value)) return; // Field is empty or mid-edit
+            this.params[def.key] = value;
+            this.setValueLabel(def.id, value);
+        }
+
+        if (def.id === 'algorithm') this.updateAlgorithmUI();
+        if (def.render && !this.isAnimating) this.drawFrame();
+        if (def.prep) this.scheduleTargetUpdate();
+        if (def.physical && this.result) this.updateStatsDisplay();
+        this.saveSettings();
     }
 
-    // Enable or disable the playback and export controls. They are disabled
-    // during generation, when the sequence is incomplete and does not match
-    // the pins being built.
-    setResultControlsEnabled(enabled) {
-        ['playBtn', 'pauseBtn', 'resetBtn', 'skipBtn', 'exportInstructions', 'exportJSON', 'exportImage'].forEach(id => {
-            document.getElementById(id).disabled = !enabled;
-        });
+    setValueLabel(id, value) {
+        const label = document.getElementById(id + 'Value');
+        if (label) label.textContent = value;
     }
 
-    // Map an input element id to its key in this.params
-    paramKey(inputId) {
-        if (inputId === 'pins') return 'numPins';
-        if (inputId === 'angles') return 'radonAngles';
-        return inputId;
-    }
-
-    // Clamp every numeric parameter to its input's min/max, so values typed
+    // Read every input, clamping numbers to their min/max, so values typed
     // out of range (or left half-typed) never reach the algorithms.
     readParams() {
-        const inputs = ['radius', 'pins', 'iterations', 'lineOpacity', 'minDistance', 'threshold', 'lineWeight', 'animationSpeed', 'angles'];
-        inputs.forEach(id => {
-            const el = document.getElementById(id);
-            if (!el) return;
-            const key = this.paramKey(id);
+        PARAM_DEFS.forEach(def => {
+            const el = document.getElementById(def.id);
+            if (def.kind === 'select') {
+                this.params[def.key] = el.value;
+                return;
+            }
             let value = parseFloat(el.value);
-            if (!Number.isFinite(value)) value = this.params[key];
+            if (!Number.isFinite(value)) value = Number.isFinite(this.params[def.key]) ? this.params[def.key] : parseFloat(el.defaultValue);
             const min = parseFloat(el.min);
             const max = parseFloat(el.max);
             if (Number.isFinite(min)) value = Math.max(min, value);
             if (Number.isFinite(max)) value = Math.min(max, value);
-            if (el.type === 'number') value = Math.round(value);
-            this.params[key] = value;
+            if (def.kind === 'int') value = Math.round(value);
+            this.params[def.key] = value;
             el.value = value;
-            document.getElementById(id + 'Value').textContent = value;
+            this.setValueLabel(def.id, value);
         });
+    }
+
+    // Settings are a convenience: storage can be unavailable (private
+    // windows, blocked site data), so every access is guarded.
+    saveSettings() {
+        try {
+            const values = {};
+            PARAM_DEFS.forEach(def => { values[def.id] = document.getElementById(def.id).value; });
+            localStorage.setItem(SETTINGS_KEY, JSON.stringify(values));
+        } catch (e) {
+            // Ignore: settings just won't be remembered
+        }
+    }
+
+    restoreSettings() {
+        let values = null;
+        try {
+            values = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null');
+        } catch (e) {
+            values = null;
+        }
+        if (!values || typeof values !== 'object') return;
+        PARAM_DEFS.forEach(def => {
+            const el = document.getElementById(def.id);
+            const value = values[def.id];
+            if (typeof value !== 'string') return;
+            if (def.kind === 'select') {
+                if ([...el.options].some(o => o.value === value)) el.value = value;
+            } else if (Number.isFinite(parseFloat(value))) {
+                el.value = value;
+            }
+        });
+    }
+
+    resetImagePreparation() {
+        Object.entries(PREP_DEFAULTS).forEach(([key, value]) => {
+            const def = PARAM_DEFS.find(d => d.key === key);
+            document.getElementById(def.id).value = value;
+        });
+        this.readParams();
+        this.saveSettings();
+        this.scheduleTargetUpdate();
     }
 
     updateAlgorithmUI() {
         const isRadon = this.params.algorithm === 'radon';
-        const radonElements = document.querySelectorAll('.radon-only');
-        const greedyElements = document.querySelectorAll('.greedy-only');
-
-        radonElements.forEach(el => {
+        document.querySelectorAll('.radon-only').forEach(el => {
             el.style.display = isRadon ? 'block' : 'none';
         });
-
-        greedyElements.forEach(el => {
+        document.querySelectorAll('.greedy-only').forEach(el => {
             el.style.display = isRadon ? 'none' : 'block';
         });
 
@@ -183,7 +233,6 @@ class StringArtGenerator {
             document.getElementById('autoOptimizeCheck').checked = false;
         }
 
-        // Update algorithm info
         const infoText = document.querySelector('#algorithmInfo .info-text');
         if (isRadon) {
             infoText.innerHTML = '<strong>Radon Transform:</strong> Uses mathematical projections (like CT scans) to identify important lines. Combines Radon analysis with pixel data for better results. Works with all parameters!';
@@ -192,209 +241,9 @@ class StringArtGenerator {
         }
     }
 
-    setupCanvas() {
-        const size = this.gen.radius * 2 + 100;
-        this.canvas.width = size;
-        this.canvas.height = size;
-        this.centerX = size / 2;
-        this.centerY = size / 2;
-    }
-
-
-    analyzeImageAndSuggest() {
-        if (!this.image) {
-            this.showStatus('Please upload an image first to analyze it', 'error');
-            document.getElementById('autoOptimizeCheck').checked = false;
-            return;
-        }
-
-        this.readParams();
-        const size = this.params.radius * 2;
-        const data = this.processImage(size);
-        const analysis = this.analyzeImage(data, size);
-        this.imageAnalysis = analysis;
-
-        // Calculate optimal parameters based on analysis
-        this.suggestedParams = this.calculateOptimalParams(analysis);
-
-        // Display results
-        this.displayOptimizationSuggestions(analysis, this.suggestedParams);
-    }
-
-    analyzeImage(data, size) {
-        let darkPixels = 0;
-        let totalIntensity = 0;
-        let maxIntensity = 0;
-        let minIntensity = 255;
-
-        // Calculate statistics
-        for (let i = 0; i < data.length; i++) {
-            const val = data[i];
-            totalIntensity += val;
-
-            if (val > maxIntensity) maxIntensity = val;
-            if (val < minIntensity) minIntensity = val;
-            if (val > 128) darkPixels++;
-        }
-
-        const avgIntensity = totalIntensity / data.length;
-        const darkRatio = darkPixels / data.length;
-
-        // Calculate contrast (standard deviation)
-        let variance = 0;
-        for (let i = 0; i < data.length; i++) {
-            variance += Math.pow(data[i] - avgIntensity, 2);
-        }
-        const stdDev = Math.sqrt(variance / data.length);
-        const contrast = stdDev / 128; // Normalized 0-1
-
-        // Detect edges (simple Sobel-like)
-        let edgePixels = 0;
-        for (let y = 1; y < size - 1; y++) {
-            for (let x = 1; x < size - 1; x++) {
-                const idx = y * size + x;
-                const gx = Math.abs(data[idx + 1] - data[idx - 1]);
-                const gy = Math.abs(data[idx + size] - data[idx - size]);
-                const gradient = Math.sqrt(gx * gx + gy * gy);
-
-                if (gradient > 30) edgePixels++;
-            }
-        }
-        const edgeRatio = edgePixels / data.length;
-
-        // Classify image type. The thresholds were calibrated on standard test
-        // photos (portraits, animals, objects, text, logos, textures, scenery).
-        // Faces can't be told apart from other photos with these global
-        // statistics, so "photo" covers any detailed, mid-tone photograph.
-        let imageType = 'general';
-        if (contrast > 0.45 && edgeRatio >= 0.03 && edgeRatio <= 0.25 &&
-            darkRatio >= 0.3 && darkRatio <= 0.6) {
-            imageType = 'photo';
-        } else if (edgeRatio > 0.25) {
-            imageType = 'high-detail';
-        } else if (contrast < 0.25) {
-            imageType = 'low-contrast';
-        } else if (darkRatio > 0.6) {
-            imageType = 'dark';
-        } else if (darkRatio < 0.3) {
-            imageType = 'light';
-        }
-
-        return {
-            avgIntensity,
-            darkRatio,
-            contrast,
-            edgeRatio,
-            imageType,
-            stdDev,
-            minIntensity,
-            maxIntensity
-        };
-    }
-
-    calculateOptimalParams(analysis) {
-        const params = {};
-
-        // Number of pins based on image detail
-        if (analysis.edgeRatio > 0.25 || analysis.imageType === 'photo') {
-            params.numPins = 250; // High detail
-        } else if (analysis.edgeRatio > 0.15) {
-            params.numPins = 200; // Medium detail
-        } else {
-            params.numPins = 150; // Low detail
-        }
-
-        // Iterations based on darkness and contrast
-        if (analysis.imageType === 'photo') {
-            params.iterations = 3500;
-        } else if (analysis.darkRatio > 0.5) {
-            params.iterations = 4000; // Dark images need more lines
-        } else if (analysis.contrast > 0.5) {
-            params.iterations = 3000; // High contrast
-        } else {
-            params.iterations = 2500; // Low contrast
-        }
-
-        // Line opacity based on average intensity
-        if (analysis.darkRatio > 0.6) {
-            params.lineOpacity = 15; // Light lines for dark images
-        } else if (analysis.darkRatio < 0.3) {
-            params.lineOpacity = 25; // Darker lines for light images
-        } else {
-            params.lineOpacity = 20; // Balanced
-        }
-
-        // Min distance based on detail level
-        if (analysis.edgeRatio > 0.25) {
-            params.minDistance = 15; // Allow closer connections for detail
-        } else {
-            params.minDistance = 20; // Standard
-        }
-
-        // Line weight based on pin count
-        if (params.numPins > 200) {
-            params.lineWeight = 0.8; // Thinner for many pins
-        } else {
-            params.lineWeight = 1; // Standard
-        }
-
-        return params;
-    }
-
-    displayOptimizationSuggestions(analysis, params) {
-        const resultsDiv = document.getElementById('optimizationResults');
-        const infoList = document.getElementById('analysisInfo');
-
-        // Image type
-        const typeLabel = {
-            'photo': '📷 Photo / portrait',
-            'high-detail': '🌿 High detail / texture',
-            'low-contrast': '🌫️ Low contrast',
-            'dark': '🌑 Dark',
-            'light': '☀️ Light',
-            'general': '🖼️ General'
-        };
-
-        let html = '';
-        html += `<li><strong>Type:</strong> ${typeLabel[analysis.imageType]}</li>`;
-        html += `<li><strong>Contrast:</strong> ${(analysis.contrast * 100).toFixed(0)}% ${analysis.contrast > 0.5 ? '(High)' : analysis.contrast > 0.3 ? '(Medium)' : '(Low)'}</li>`;
-        html += `<li><strong>Detail Level:</strong> ${(analysis.edgeRatio * 100).toFixed(0)}% edges</li>`;
-        html += `<li><strong>Darkness:</strong> ${(analysis.darkRatio * 100).toFixed(0)}% dark pixels</li>`;
-
-        html += '<li style="margin-top: 10px;"><strong>🎯 Suggested Settings:</strong></li>';
-        html += `<li style="padding-left: 15px;">Pins: ${params.numPins}</li>`;
-        html += `<li style="padding-left: 15px;">Iterations: ${params.iterations}</li>`;
-        html += `<li style="padding-left: 15px;">Line Opacity: ${params.lineOpacity}%</li>`;
-        html += `<li style="padding-left: 15px;">Min Distance: ${params.minDistance}</li>`;
-        html += `<li style="padding-left: 15px;">Line Weight: ${params.lineWeight}px</li>`;
-        infoList.innerHTML = html;
-
-        resultsDiv.style.display = 'block';
-    }
-
-    applyOptimizedParams() {
-        if (!this.suggestedParams) return;
-
-        const fields = {
-            pins: 'numPins',
-            iterations: 'iterations',
-            lineOpacity: 'lineOpacity',
-            minDistance: 'minDistance',
-            lineWeight: 'lineWeight'
-        };
-
-        // Apply parameters and update UI inputs
-        Object.entries(fields).forEach(([inputId, key]) => {
-            const value = this.suggestedParams[key];
-            this.params[key] = value;
-            document.getElementById(inputId).value = value;
-            document.getElementById(inputId + 'Value').textContent = value;
-        });
-
-        this.showStatus('Optimized parameters applied! Click "Generate String Art" to see results.', 'success');
-        document.getElementById('optimizationResults').style.display = 'none';
-        document.getElementById('autoOptimizeCheck').checked = false;
-    }
+    // ------------------------------------------------------------------
+    // Image loading and preparation
+    // ------------------------------------------------------------------
 
     handleImageUpload(event) {
         const file = event.target.files[0];
@@ -405,8 +254,10 @@ class StringArtGenerator {
             const img = new Image();
             img.onload = () => {
                 this.image = img;
+                this.imageName = this.fileBaseName(file.name);
                 this.showImagePreview(img);
-                this.showStatus('Image loaded! Click "Generate String Art" to start.', 'success');
+                this.scheduleTargetUpdate();
+                this.showStatus('Image loaded! Adjust the preparation if needed, then click "Generate String Art".', 'success');
                 if (document.getElementById('autoOptimizeCheck').checked) {
                     this.analyzeImageAndSuggest();
                 }
@@ -422,6 +273,12 @@ class StringArtGenerator {
         reader.readAsDataURL(file);
     }
 
+    // File name without extension, reduced to characters safe in any file system
+    fileBaseName(name) {
+        const base = name.replace(/\.[^.]*$/, '').replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
+        return base.slice(0, 60) || 'string-art';
+    }
+
     showImagePreview(img) {
         const preview = document.getElementById('imagePreview');
         preview.innerHTML = '';
@@ -433,389 +290,368 @@ class StringArtGenerator {
         preview.appendChild(previewImg);
     }
 
+    // Scale, crop and adjust the image into a size x size square and return
+    // its darkness values (see StringArtCore.toDarkness).
+    prepareImage(size) {
+        const temp = document.createElement('canvas');
+        temp.width = size;
+        temp.height = size;
+        const ctx = temp.getContext('2d');
+        ctx.fillStyle = 'white';
+        ctx.fillRect(0, 0, size, size);
+
+        const place = core.imagePlacement(this.image.width, this.image.height, size, this.params);
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(this.image, place.x, place.y, place.width, place.height);
+
+        const rgba = ctx.getImageData(0, 0, size, size).data;
+        return core.toDarkness(rgba, size, { contrast: this.params.contrast, gamma: this.params.gamma });
+    }
+
+    scheduleTargetUpdate() {
+        if (!this.image || this.targetFrame) return;
+        this.targetFrame = requestAnimationFrame(() => {
+            this.targetFrame = null;
+            this.updateTarget();
+        });
+    }
+
+    // Show the prepared image, masked to the pin circle
+    updateTarget() {
+        if (!this.image) return;
+        const size = this.params.radius * 2;
+        const darkness = this.prepareImage(size);
+        this.targetCanvas.width = size;
+        this.targetCanvas.height = size;
+        const img = this.targetCtx.createImageData(size, size);
+        const c = size / 2;
+        const r2 = core.pinRadiusForSize(size) ** 2;
+        for (let y = 0; y < size; y++) {
+            for (let x = 0; x < size; x++) {
+                const p = y * size + x;
+                const inside = (x + 0.5 - c) ** 2 + (y + 0.5 - c) ** 2 <= r2;
+                const v = inside ? Math.round((1 - darkness[p]) * 255) : 240;
+                img.data[p * 4] = v;
+                img.data[p * 4 + 1] = v;
+                img.data[p * 4 + 2] = v;
+                img.data[p * 4 + 3] = 255;
+            }
+        }
+        this.targetCtx.putImageData(img, 0, 0);
+        document.querySelector('.target-container').classList.add('visible');
+    }
+
+    // ------------------------------------------------------------------
+    // Auto-optimize
+    // ------------------------------------------------------------------
+
+    analyzeImageAndSuggest() {
+        if (!this.image) {
+            this.showStatus('Please upload an image first to analyze it', 'error');
+            document.getElementById('autoOptimizeCheck').checked = false;
+            return;
+        }
+
+        this.readParams();
+        const size = this.params.radius * 2;
+        const analysis = core.analyzeImage(this.prepareImage(size), size);
+        this.suggestedParams = core.suggestParams(analysis);
+        this.displayOptimizationSuggestions(analysis, this.suggestedParams);
+    }
+
+    displayOptimizationSuggestions(analysis, params) {
+        const typeLabel = {
+            'photo': '📷 Photo / portrait',
+            'high-detail': '🌿 High detail / texture',
+            'low-contrast': '🌫️ Low contrast',
+            'dark': '🌑 Dark',
+            'light': '☀️ Light',
+            'general': '🖼️ General'
+        };
+
+        let html = '';
+        html += `<li><strong>Type:</strong> ${typeLabel[analysis.imageType]}</li>`;
+        html += `<li><strong>Contrast:</strong> ${(analysis.contrast * 100).toFixed(0)}% ${analysis.contrast > 0.5 ? '(High)' : analysis.contrast > 0.3 ? '(Medium)' : '(Low)'}</li>`;
+        html += `<li><strong>Detail Level:</strong> ${(analysis.edgeRatio * 100).toFixed(0)}% edges</li>`;
+        html += `<li><strong>Darkness:</strong> ${(analysis.darkRatio * 100).toFixed(0)}% dark pixels</li>`;
+        html += '<li style="margin-top: 10px;"><strong>🎯 Suggested Settings:</strong></li>';
+        html += `<li style="padding-left: 15px;">Pins: ${params.numPins}</li>`;
+        html += `<li style="padding-left: 15px;">Iterations: ${params.iterations}</li>`;
+        html += `<li style="padding-left: 15px;">Line Opacity: ${params.lineOpacity}%</li>`;
+        html += `<li style="padding-left: 15px;">Min Distance: ${params.minDistance}</li>`;
+        html += `<li style="padding-left: 15px;">Line Weight: ${params.lineWeight}px</li>`;
+        document.getElementById('analysisInfo').innerHTML = html;
+
+        document.getElementById('optimizationResults').style.display = 'block';
+    }
+
+    applyOptimizedParams() {
+        if (!this.suggestedParams) return;
+
+        const fields = { pins: 'numPins', iterations: 'iterations', lineOpacity: 'lineOpacity', minDistance: 'minDistance', lineWeight: 'lineWeight' };
+        Object.entries(fields).forEach(([inputId, key]) => {
+            document.getElementById(inputId).value = this.suggestedParams[key];
+        });
+        this.readParams();
+        this.saveSettings();
+
+        this.showStatus('Optimized parameters applied! Click "Generate String Art" to see results.', 'success');
+        document.getElementById('optimizationResults').style.display = 'none';
+        document.getElementById('autoOptimizeCheck').checked = false;
+    }
+
+    // ------------------------------------------------------------------
+    // Generation
+    // ------------------------------------------------------------------
+
     async generate() {
         if (!this.image) {
             this.showStatus('Please upload an image first!', 'error');
             return;
         }
+        if (this.job) return;
 
-        const generateBtn = document.getElementById('generateBtn');
+        this.readParams();
+        const params = { ...this.params };
+        const size = params.radius * 2;
+        const darkness = this.prepareImage(size);
+
+        this.setGenerating(true);
         this.showStatus('Generating string art...', 'info', 0);
-        generateBtn.disabled = true;
-        this.pauseAnimation();
-        this.isGenerating = true;
-        this.setResultControlsEnabled(false);
 
+        let result;
         try {
-            // Freeze the parameters for this run
-            this.readParams();
-            this.gen = { ...this.params };
-
-            // Update canvas size
-            this.setupCanvas();
-
-            // Generate pins
-            this.generatePins();
-
-            // Process image
-            const size = this.gen.radius * 2;
-            this.grayscaleData = this.processImage(size);
-
-            // Calculate string sequence based on selected algorithm
-            if (this.gen.algorithm === 'radon') {
-                await this.calculateSequenceRadon();
+            result = await this.runGeneration(darkness, size, params);
+        } catch (err) {
+            this.setGenerating(false);
+            if (err && err.cancelled) {
+                this.showStatus('Generation cancelled.', 'info');
             } else {
-                await this.calculateSequenceGreedy();
+                console.error(err);
+                this.showStatus(`Generation failed: ${err && err.message ? err.message : err}`, 'error');
+            }
+            return;
+        }
+        this.setGenerating(false);
+
+        if (result.sequence.length === 0) {
+            this.showStatus('No lines were generated. Try a lower Min Pin Distance or Darkness Threshold.', 'error');
+            return;
+        }
+
+        // The previous result stays usable until this point
+        this.pauseAnimation();
+        this.result = { ...result, params, size };
+        this.setupCanvas();
+
+        document.getElementById('animationSection').style.display = 'block';
+        document.getElementById('exportSection').style.display = 'block';
+        document.getElementById('statsSection').style.display = 'block';
+        this.updateStatsDisplay();
+
+        this.resetAnimation();
+        this.playAnimation();
+
+        let early = '';
+        if (result.stopReason === 'converged') {
+            early = params.algorithm === 'radon'
+                ? ` Stopped at ${result.sequence.length} lines: no line scored above the darkness threshold.`
+                : ` Stopped at ${result.sequence.length} lines: more string would not improve the match.`;
+        }
+        this.showStatus(`Generation complete!${early} Animation playing...`, 'success');
+    }
+
+    setGenerating(active) {
+        document.getElementById('generateBtn').disabled = active;
+        document.getElementById('cancelBtn').style.display = active ? '' : 'none';
+        const progress = document.getElementById('generationProgress');
+        progress.style.display = active ? 'block' : 'none';
+        progress.value = 0;
+    }
+
+    cancelGeneration() {
+        if (this.job) this.job.cancel();
+    }
+
+    onGenerationProgress(count, total) {
+        const progress = document.getElementById('generationProgress');
+        progress.value = total > 0 ? (count / total) * 100 : 0;
+        this.showStatus(`Generating string art... ${count} / ${total} lines`, 'info', 0);
+    }
+
+    // Run the generator in a Web Worker, so the page stays responsive, and
+    // fall back to running it here if workers are unavailable.
+    runGeneration(darkness, size, params) {
+        return new Promise((resolve, reject) => {
+            const finish = (fn, value) => {
+                this.job = null;
+                fn(value);
+            };
+            const cancelled = Object.assign(new Error('cancelled'), { cancelled: true });
+
+            let worker = null;
+            try {
+                worker = new Worker(StringArtGenerator.workerURL());
+            } catch (e) {
+                worker = null;
             }
 
-            // The sequence is complete: playback and exports are safe again
-            this.isGenerating = false;
-            this.setResultControlsEnabled(true);
-
-            if (this.sequence.length === 0) {
-                this.showStatus('No lines were generated. Try a lower Min Pin Distance or Darkness Threshold.', 'error');
-                this.drawFrame();
-                this.updateProgress();
+            if (!worker) {
+                this.runOnMainThread(darkness, size, params, resolve, reject, finish, cancelled);
                 return;
             }
 
-            // Show animation controls
-            document.getElementById('animationSection').style.display = 'block';
-            document.getElementById('exportSection').style.display = 'block';
-            document.getElementById('statsSection').style.display = 'block';
+            let started = false;
+            worker.onmessage = (event) => {
+                const msg = event.data;
+                started = true;
+                if (msg.type === 'progress') {
+                    this.onGenerationProgress(msg.count, msg.total);
+                } else if (msg.type === 'done') {
+                    worker.terminate();
+                    finish(resolve, msg.result);
+                } else if (msg.type === 'error') {
+                    worker.terminate();
+                    finish(reject, new Error(msg.message));
+                }
+            };
+            worker.onerror = (event) => {
+                event.preventDefault();
+                worker.terminate();
+                if (!started) {
+                    // The worker could not even start (e.g. blocked by the page's security policy)
+                    this.runOnMainThread(darkness, size, params, resolve, reject, finish, cancelled);
+                } else {
+                    finish(reject, new Error(event.message || 'Worker error'));
+                }
+            };
+            this.job = {
+                cancel: () => {
+                    worker.terminate();
+                    finish(reject, cancelled);
+                }
+            };
+            worker.postMessage({ type: 'start', darkness, size, params });
+        });
+    }
 
-            // Update statistics display
-            this.updateStatsDisplay();
-
-            // Reset and start animation
-            this.resetAnimation();
-            this.playAnimation();
-
-            this.showStatus('Generation complete! Animation playing...', 'success');
+    runOnMainThread(darkness, size, params, resolve, reject, finish, cancelled) {
+        let stop = false;
+        this.job = { cancel: () => { stop = true; } };
+        let run;
+        try {
+            run = core.createRun(darkness, size, params);
         } catch (err) {
-            console.error(err);
-            this.showStatus(`Generation failed: ${err.message}`, 'error');
-        } finally {
-            this.isGenerating = false;
-            this.setResultControlsEnabled(true);
-            generateBtn.disabled = false;
+            finish(reject, err);
+            return;
         }
-    }
-
-    generatePins() {
-        this.pins = [];
-        for (let i = 0; i < this.gen.numPins; i++) {
-            const angle = (i / this.gen.numPins) * Math.PI * 2;
-            const x = this.centerX + Math.cos(angle) * this.gen.radius;
-            const y = this.centerY + Math.sin(angle) * this.gen.radius;
-            this.pins.push({ x, y, index: i });
-        }
-    }
-
-    // Scale the image into a size x size square and return its inverted
-    // grayscale values (dark areas have high values).
-    processImage(size) {
-        // Create temporary canvas to process image
-        const tempCanvas = document.createElement('canvas');
-        const tempCtx = tempCanvas.getContext('2d');
-        tempCanvas.width = size;
-        tempCanvas.height = size;
-
-        // Draw and crop image to circle
-        tempCtx.fillStyle = 'white';
-        tempCtx.fillRect(0, 0, size, size);
-
-        // Calculate aspect ratio and draw centered
-        const scale = Math.min(size / this.image.width, size / this.image.height);
-        const scaledWidth = this.image.width * scale;
-        const scaledHeight = this.image.height * scale;
-        const offsetX = (size - scaledWidth) / 2;
-        const offsetY = (size - scaledHeight) / 2;
-
-        tempCtx.drawImage(this.image, offsetX, offsetY, scaledWidth, scaledHeight);
-
-        // Get image data and convert to grayscale
-        this.imageData = tempCtx.getImageData(0, 0, size, size);
-        const grayscale = new Uint8ClampedArray(size * size);
-
-        for (let i = 0; i < this.imageData.data.length; i += 4) {
-            const r = this.imageData.data[i];
-            const g = this.imageData.data[i + 1];
-            const b = this.imageData.data[i + 2];
-            const gray = 0.299 * r + 0.587 * g + 0.114 * b;
-            grayscale[i / 4] = 255 - gray; // Invert so darker areas have higher values
-        }
-
-        return grayscale;
-    }
-
-    async calculateSequenceGreedy() {
-        this.sequence = [];
-        const size = this.gen.radius * 2;
-        const numPins = this.gen.numPins;
-        const workingData = new Float32Array(this.grayscaleData);
-
-        let currentPin = 0;
-        const opacityValue = this.gen.lineOpacity / 100 * 255;
-
-        for (let i = 0; i < this.gen.iterations; i++) {
-            let bestPin = -1;
-            let bestScore = -Infinity;
-
-            // Try all possible pins
-            for (let targetPin = 0; targetPin < numPins; targetPin++) {
-                // Skip if too close
-                const distance = Math.abs(targetPin - currentPin);
-                const circularDistance = Math.min(distance, numPins - distance);
-                if (circularDistance < this.gen.minDistance) continue;
-
-                // Calculate score for this line
-                const score = this.calculateLineScore(currentPin, targetPin, workingData, size);
-
-                if (score > bestScore) {
-                    bestScore = score;
-                    bestPin = targetPin;
-                }
+        const tick = () => {
+            if (stop) {
+                finish(reject, cancelled);
+                return;
             }
-
-            if (bestPin === -1) break;
-
-            // Add to sequence
-            this.sequence.push({ from: currentPin, to: bestPin });
-
-            // Update working data (darken the line)
-            this.applyLine(currentPin, bestPin, workingData, size, opacityValue);
-
-            currentPin = bestPin;
-
-            // Progress update
-            if (i % 100 === 0) {
-                this.showStatus(`Generating string art... ${i} / ${this.gen.iterations}`, 'info', 0);
-                await new Promise(resolve => setTimeout(resolve, 0)); // Allow UI updates
+            let status;
+            try {
+                status = run.step(20);
+            } catch (err) {
+                finish(reject, err);
+                return;
             }
-        }
+            this.onGenerationProgress(status.count, params.iterations);
+            if (status.done) {
+                finish(resolve, {
+                    pins: run.pins,
+                    radius: run.radius,
+                    sequence: run.sequence(),
+                    rmse: run.rmse(),
+                    stopReason: status.stopReason
+                });
+            } else {
+                setTimeout(tick, 0);
+            }
+        };
+        setTimeout(tick, 0);
     }
 
-    async calculateSequenceRadon() {
-        this.sequence = [];
-        const size = this.gen.radius * 2;
-        const numPins = this.gen.numPins;
-        const workingData = new Float32Array(this.grayscaleData);
-
-        // Calculate Radon transform projections
-        this.showStatus('Computing Radon transform...', 'info', 0);
-        await new Promise(resolve => setTimeout(resolve, 0));
-        const projections = this.calculateRadonTransform(this.grayscaleData, size);
-
-        // Mean darkness of each pin-to-pin line in the original image,
-        // filled in on first use (NaN = not computed yet)
-        projections.originalMean = new Float32Array(numPins * numPins).fill(NaN);
-
-        // Use iterative approach similar to greedy but guided by Radon
-        // This respects minDistance and number of pins while using Radon scores
-        let currentPin = 0;
-        const opacityValue = this.gen.lineOpacity / 100 * 255;
-
-        for (let i = 0; i < this.gen.iterations; i++) {
-            let bestPin = -1;
-            let bestScore = -Infinity;
-
-            // Try all possible pins
-            for (let targetPin = 0; targetPin < numPins; targetPin++) {
-                // Skip if too close (respect minDistance)
-                const distance = Math.abs(targetPin - currentPin);
-                const circularDistance = Math.min(distance, numPins - distance);
-                if (circularDistance < this.gen.minDistance) continue;
-
-                // Score based on Radon projection intensity for this line
-                const score = this.calculateRadonLineScore(currentPin, targetPin, projections, workingData, size);
-
-                if (score > bestScore) {
-                    bestScore = score;
-                    bestPin = targetPin;
-                }
-            }
-
-            if (bestPin === -1 || bestScore < this.gen.threshold) break;
-
-            // Add to sequence
-            this.sequence.push({ from: currentPin, to: bestPin });
-
-            // Update working data (darken the line)
-            this.applyLine(currentPin, bestPin, workingData, size, opacityValue);
-
-            currentPin = bestPin;
-
-            // Progress update
-            if (i % 100 === 0) {
-                this.showStatus(`Generating string art... ${i} / ${this.gen.iterations}`, 'info', 0);
-                await new Promise(resolve => setTimeout(resolve, 0));
-            }
+    // Blob URL for the worker: the core module plus its worker entry point.
+    // Built from the loaded code, so it also works from file:// and in the
+    // single-file build, where a separate worker file couldn't be loaded.
+    static workerURL() {
+        if (!StringArtGenerator.cachedWorkerURL) {
+            const source =
+                `const core = (${core.factory.toString()})();\n` +
+                `(${core.workerMain.toString()})(self, core);\n`;
+            StringArtGenerator.cachedWorkerURL = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
         }
+        return StringArtGenerator.cachedWorkerURL;
     }
 
+    // ------------------------------------------------------------------
+    // Drawing and animation
+    // ------------------------------------------------------------------
 
-    // Compute the Radon transform R(theta, rho) of the image: the mean
-    // intensity along every line (x - c)cos(theta) + (y - c)sin(theta) = rho,
-    // where c is the image center. theta is the angle of the line's normal,
-    // in [0, pi), and rho is signed. Only lines that cross the pin circle
-    // are needed, so |rho| <= size / 2 and each line is sampled along its
-    // chord of that circle.
-    calculateRadonTransform(data, size) {
-        const numAngles = this.gen.radonAngles;
-        const rhoStep = 2; // Step size of 2 pixels
-        const maxRho = size / 2;
-        const rhoSteps = Math.ceil(maxRho / rhoStep);
-        const numRhos = rhoSteps * 2 + 1;
-        const intensity = new Float32Array(numAngles * numRhos);
-        const center = size / 2;
-
-        for (let angleIdx = 0; angleIdx < numAngles; angleIdx++) {
-            const theta = (angleIdx * Math.PI) / numAngles; // 0 to π
-            const cosTheta = Math.cos(theta);
-            const sinTheta = Math.sin(theta);
-
-            for (let rhoIdx = 0; rhoIdx < numRhos; rhoIdx++) {
-                const rho = (rhoIdx - rhoSteps) * rhoStep;
-                if (Math.abs(rho) > maxRho) continue;
-
-                // Point on the line closest to the center, then walk along it
-                const baseX = center + rho * cosTheta;
-                const baseY = center + rho * sinTheta;
-                const halfChord = Math.sqrt(maxRho * maxRho - rho * rho);
-
-                let sum = 0;
-                let count = 0;
-                for (let t = -halfChord; t <= halfChord; t += 1) {
-                    const xi = Math.floor(baseX - t * sinTheta);
-                    const yi = Math.floor(baseY + t * cosTheta);
-
-                    if (xi >= 0 && xi < size && yi >= 0 && yi < size) {
-                        sum += data[yi * size + xi];
-                        count++;
-                    }
-                }
-
-                // Only keep lines with enough samples
-                if (count > 10) {
-                    intensity[angleIdx * numRhos + rhoIdx] = sum / count;
-                }
-            }
-        }
-
-        return { intensity, numAngles, numRhos, rhoSteps, rhoStep };
+    setupCanvas() {
+        const size = (this.result ? this.result.size : this.params.radius * 2) + CANVAS_MARGIN * 2;
+        this.canvas.width = size;
+        this.canvas.height = size;
     }
 
-    // Index of the projection bin nearest to the line between two pins
-    radonBin(pin1, pin2, projections) {
-        const p1 = this.pins[pin1];
-        const p2 = this.pins[pin2];
-
-        // Normal angle of the line, in the same convention as the transform
-        const dx = p2.x - p1.x;
-        const dy = p2.y - p1.y;
-        let theta = Math.atan2(dx, -dy);
-        if (theta < 0) theta += Math.PI;
-        if (theta >= Math.PI) theta -= Math.PI;
-
-        // Signed distance from the center to the line along that normal
-        let rho = (p1.x - this.centerX) * Math.cos(theta) + (p1.y - this.centerY) * Math.sin(theta);
-
-        // theta = pi is theta = 0 with rho negated
-        const { numAngles, numRhos, rhoSteps, rhoStep } = projections;
-        let angleIdx = Math.round((theta / Math.PI) * numAngles);
-        if (angleIdx >= numAngles) {
-            angleIdx -= numAngles;
-            rho = -rho;
-        }
-        const rhoIdx = Math.min(numRhos - 1, Math.max(0, Math.round(rho / rhoStep) + rhoSteps));
-        return angleIdx * numRhos + rhoIdx;
+    clearCanvas() {
+        this.setupCanvas();
+        this.ctx.fillStyle = '#ffffff';
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
     }
 
-    // Both terms are mean darkness along the line (0-255), so the weights
-    // mean what they say and the score can be compared with the threshold.
-    calculateRadonLineScore(pin1, pin2, projections, workingData, size) {
-        // Actual darkness remaining along the line
-        const pixelScore = this.calculateLineScore(pin1, pin2, workingData, size, true);
+    // Redraw the background, the pins and the first animationIndex lines
+    drawFrame() {
+        if (!this.result) return;
+        const ctx = this.ctx;
+        const c = this.result.size / 2 + CANVAS_MARGIN;
 
-        // The projections come from the original image and never change, so
-        // scale them by the share of this line's darkness that is left. Lines
-        // through areas already covered by other strings then fade too.
-        const pairIdx = Math.min(pin1, pin2) * this.gen.numPins + Math.max(pin1, pin2);
-        let originalMean = projections.originalMean[pairIdx];
-        if (Number.isNaN(originalMean)) {
-            originalMean = this.calculateLineScore(pin1, pin2, this.grayscaleData, size, true);
-            projections.originalMean[pairIdx] = originalMean;
-        }
-        const remaining = originalMean > 0 ? Math.min(1, pixelScore / originalMean) : 0;
-        const radonScore = projections.intensity[this.radonBin(pin1, pin2, projections)] * remaining;
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
-        // Weighted combination: 70% Radon, 30% actual pixels
-        const radonWeight = 0.7;
-        const pixelWeight = 0.3;
+        ctx.strokeStyle = '#e0e0e0';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(c, c, this.result.radius, 0, Math.PI * 2);
+        ctx.stroke();
 
-        return radonScore * radonWeight + pixelScore * pixelWeight;
+        ctx.fillStyle = '#666';
+        this.result.pins.forEach(pin => {
+            ctx.beginPath();
+            ctx.arc(pin.x + CANVAS_MARGIN, pin.y + CANVAS_MARGIN, 2, 0, Math.PI * 2);
+            ctx.fill();
+        });
+
+        this.drawLines(0, this.animationIndex);
     }
 
-    // Sum of the values along the line, or their mean when `average` is set
-    calculateLineScore(pin1, pin2, data, size, average = false) {
-        const p1 = this.pins[pin1];
-        const p2 = this.pins[pin2];
-
-        // Offset to image coordinates
-        const x1 = p1.x - this.centerX + this.gen.radius;
-        const y1 = p1.y - this.centerY + this.gen.radius;
-        const x2 = p2.x - this.centerX + this.gen.radius;
-        const y2 = p2.y - this.centerY + this.gen.radius;
-
-        let score = 0;
-        let count = 0;
-        const steps = Math.max(1, Math.ceil(Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1))));
-
-        for (let i = 0; i <= steps; i++) {
-            const t = i / steps;
-            const x = Math.round(x1 + (x2 - x1) * t);
-            const y = Math.round(y1 + (y2 - y1) * t);
-
-            if (x >= 0 && x < size && y >= 0 && y < size) {
-                const idx = y * size + x;
-                score += data[idx];
-                count++;
-            }
-        }
-
-        if (average) return count > 0 ? score / count : 0;
-        return score;
-    }
-
-    applyLine(pin1, pin2, data, size, opacity) {
-        const p1 = this.pins[pin1];
-        const p2 = this.pins[pin2];
-
-        const x1 = p1.x - this.centerX + this.gen.radius;
-        const y1 = p1.y - this.centerY + this.gen.radius;
-        const x2 = p2.x - this.centerX + this.gen.radius;
-        const y2 = p2.y - this.centerY + this.gen.radius;
-
-        const steps = Math.max(1, Math.ceil(Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1))));
-
-        for (let i = 0; i <= steps; i++) {
-            const t = i / steps;
-            const x = Math.round(x1 + (x2 - x1) * t);
-            const y = Math.round(y1 + (y2 - y1) * t);
-
-            if (x >= 0 && x < size && y >= 0 && y < size) {
-                const idx = y * size + x;
-                data[idx] = Math.max(0, data[idx] - opacity);
-            }
+    // Draw lines [from, to) on top of what is already on the canvas. Opacity
+    // and weight follow the live controls, so the rendering can be tweaked
+    // without regenerating (the closest match is with the values used to
+    // generate).
+    drawLines(from, to) {
+        const ctx = this.ctx;
+        const { pins, sequence } = this.result;
+        ctx.strokeStyle = `rgba(0, 0, 0, ${this.params.lineOpacity / 100})`;
+        ctx.lineWidth = this.params.lineWeight;
+        for (let i = from; i < to; i++) {
+            const a = pins[sequence[i].from];
+            const b = pins[sequence[i].to];
+            ctx.beginPath();
+            ctx.moveTo(a.x + CANVAS_MARGIN, a.y + CANVAS_MARGIN);
+            ctx.lineTo(b.x + CANVAS_MARGIN, b.y + CANVAS_MARGIN);
+            ctx.stroke();
         }
     }
 
     playAnimation() {
-        if (this.isAnimating || this.isGenerating) return;
-        if (this.animationIndex >= this.sequence.length) {
+        if (this.isAnimating || !this.result) return;
+        if (this.animationIndex >= this.result.sequence.length) {
             this.animationIndex = 0; // Replay from the start when finished
         }
+        if (this.animationIndex === 0) this.drawFrame();
         this.isAnimating = true;
         this.animate();
     }
@@ -829,7 +665,7 @@ class StringArtGenerator {
     }
 
     resetAnimation() {
-        if (this.isGenerating) return;
+        if (!this.result) return;
         this.pauseAnimation();
         this.animationIndex = 0;
         this.drawFrame();
@@ -837,23 +673,24 @@ class StringArtGenerator {
     }
 
     skipToEnd() {
-        if (this.isGenerating) return;
+        if (!this.result) return;
         this.pauseAnimation();
-        this.animationIndex = this.sequence.length;
+        this.animationIndex = this.result.sequence.length;
         this.drawFrame();
         this.updateProgress();
     }
 
+    // Each frame draws only the new lines on top of the previous frame
     animate() {
         if (!this.isAnimating) return;
 
-        const speed = this.params.animationSpeed;
-        this.animationIndex = Math.min(this.animationIndex + speed, this.sequence.length);
-
-        this.drawFrame();
+        const total = this.result.sequence.length;
+        const end = Math.min(this.animationIndex + this.params.animationSpeed, total);
+        this.drawLines(this.animationIndex, end);
+        this.animationIndex = end;
         this.updateProgress();
 
-        if (this.animationIndex < this.sequence.length) {
+        if (this.animationIndex < total) {
             this.animationFrameId = requestAnimationFrame(() => this.animate());
         } else {
             this.isAnimating = false;
@@ -861,155 +698,38 @@ class StringArtGenerator {
         }
     }
 
-    drawFrame() {
-        // Clear canvas
-        this.ctx.fillStyle = '#ffffff';
-        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-
-        // Draw circle outline
-        this.ctx.strokeStyle = '#e0e0e0';
-        this.ctx.lineWidth = 2;
-        this.ctx.beginPath();
-        this.ctx.arc(this.centerX, this.centerY, this.gen.radius, 0, Math.PI * 2);
-        this.ctx.stroke();
-
-        // Draw pins
-        this.ctx.fillStyle = '#666';
-        this.pins.forEach(pin => {
-            this.ctx.beginPath();
-            this.ctx.arc(pin.x, pin.y, 2, 0, Math.PI * 2);
-            this.ctx.fill();
-        });
-
-        // Draw strings (opacity and weight follow the live controls, so the
-        // rendering can be tweaked without regenerating)
-        this.ctx.strokeStyle = `rgba(0, 0, 0, ${this.params.lineOpacity / 100})`;
-        this.ctx.lineWidth = this.params.lineWeight;
-
-        for (let i = 0; i < this.animationIndex; i++) {
-            const step = this.sequence[i];
-            const from = this.pins[step.from];
-            const to = this.pins[step.to];
-
-            this.ctx.beginPath();
-            this.ctx.moveTo(from.x, from.y);
-            this.ctx.lineTo(to.x, to.y);
-            this.ctx.stroke();
-        }
-    }
-
     updateProgress() {
-        const total = this.sequence.length;
-        const text = `${this.animationIndex} / ${total}`;
-        document.getElementById('progressText').textContent = text;
-
+        const total = this.result ? this.result.sequence.length : 0;
+        document.getElementById('progressText').textContent = `${this.animationIndex} / ${total}`;
         const percent = total > 0 ? (this.animationIndex / total) * 100 : 0;
         document.getElementById('progressFill').style.width = percent + '%';
     }
 
+    // ------------------------------------------------------------------
+    // Statistics and exports
+    // ------------------------------------------------------------------
 
-    calculateProjectStats() {
-        // Calculate physical dimensions (300 pixels = 30 cm radius)
-        const pixelToCmRatio = 30 / 300; // 0.1 cm per pixel
-        const physicalRadius = this.gen.radius * pixelToCmRatio;
-
-        // Calculate total string length
-        let totalStringLength = 0; // in pixels
-        this.sequence.forEach(step => {
-            const from = this.pins[step.from];
-            const to = this.pins[step.to];
-            const dx = to.x - from.x;
-            const dy = to.y - from.y;
-            const distance = Math.sqrt(dx * dx + dy * dy);
-            totalStringLength += distance;
-        });
-
-        // Convert to meters
-        const stringLengthCm = totalStringLength * pixelToCmRatio;
-        const stringLength = stringLengthCm / 100; // meters
-        const stringLengthWithExtra = stringLength * 1.2; // 20% extra for knots and waste
-
-        // Time estimates
-        // Average person: 10-15 seconds per connection initially
-        // With fatigue: increases to 20-25 seconds after 500 connections
-        const totalConnections = this.sequence.length;
-
-        // Calculate time considering fatigue
-        let totalSeconds = 0;
-        for (let i = 0; i < totalConnections; i++) {
-            if (i < 200) {
-                totalSeconds += 12; // Fast at beginning (12 sec/connection)
-            } else if (i < 500) {
-                totalSeconds += 15; // Getting tired (15 sec/connection)
-            } else if (i < 1000) {
-                totalSeconds += 18; // Fatigued (18 sec/connection)
-            } else {
-                totalSeconds += 22; // Very fatigued (22 sec/connection)
-            }
-        }
-
-        // Add break time (5 min every 30 min of work)
-        const workMinutes = totalSeconds / 60;
-        const breakCount = Math.floor(workMinutes / 30);
-        const breakTimeMinutes = breakCount * 5; // 5-minute breaks
-
-        // Add bathroom breaks (assume 2-3 longer breaks for large projects)
-        const bathroomBreaks = Math.min(3, Math.floor(workMinutes / 60));
-        const bathroomTimeMinutes = bathroomBreaks * 8; // 8 minutes per bathroom break
-
-        const totalMinutes = workMinutes + breakTimeMinutes + bathroomTimeMinutes;
-
-        // Format times
-        const workTimeFormatted = this.formatTime(workMinutes);
-        const totalTimeFormatted = this.formatTime(totalMinutes);
-
-        // Recommended sessions (max 90 minutes per session to avoid excessive fatigue)
-        const sessionDuration = 90; // minutes
-        const recommendedSessions = Math.ceil(totalMinutes / sessionDuration);
-
+    physicalParams() {
         return {
-            physicalRadius: physicalRadius,
-            stringLength: stringLength,
-            stringLengthWithExtra: stringLengthWithExtra,
-            workTimeMinutes: workMinutes,
-            totalMinutes: totalMinutes,
-            workTimeFormatted: workTimeFormatted,
-            totalTimeFormatted: totalTimeFormatted,
-            connectionsPerMinute: workMinutes > 0 ? totalConnections / workMinutes : 0,
-            recommendedSessions: recommendedSessions,
-            sessionDuration: sessionDuration,
-            breakCount: breakCount,
-            bathroomBreaks: bathroomBreaks
+            pinCircleDiameterCm: this.params.pinCircleDiameterCm,
+            nailDiameterMm: this.params.nailDiameterMm
         };
     }
 
+    calculateProjectStats() {
+        return core.computeStats(this.result.sequence, this.result.pins, this.result.radius, this.physicalParams());
+    }
 
     updateStatsDisplay() {
         const stats = this.calculateProjectStats();
-
+        document.getElementById('matchScore').textContent = `${core.matchPercent(this.result.rmse)}%`;
         document.getElementById('stringLength').textContent = `${stats.stringLength.toFixed(2)} meters`;
         document.getElementById('stringLengthExtra').textContent = `${stats.stringLengthWithExtra.toFixed(2)} meters`;
         document.getElementById('workTime').textContent = stats.workTimeFormatted;
         document.getElementById('totalTime').textContent = stats.totalTimeFormatted;
         document.getElementById('sessions').textContent = `${stats.recommendedSessions} × ${stats.sessionDuration} min`;
-        document.getElementById('physicalSize').textContent = `${(stats.physicalRadius * 2).toFixed(1)} cm diameter`;
-    }
-
-    formatTime(minutes) {
-        let hours = Math.floor(minutes / 60);
-        let mins = Math.round(minutes % 60);
-        if (mins === 60) { // e.g. 59.6 minutes rounds up to a full hour
-            hours++;
-            mins = 0;
-        }
-
-        if (hours === 0) {
-            return `${mins} minutes`;
-        } else if (hours === 1) {
-            return `1 hour ${mins} minutes`;
-        } else {
-            return `${hours} hours ${mins} minutes`;
-        }
+        document.getElementById('physicalSize').textContent = `${stats.pinCircleDiameterCm.toFixed(1)} cm diameter`;
+        document.getElementById('pinSpacing').textContent = `${stats.pinSpacingMm.toFixed(1)} mm`;
     }
 
     downloadBlob(blob, filename) {
@@ -1025,134 +745,38 @@ class StringArtGenerator {
     }
 
     exportInstructions() {
-        if (this.isGenerating || this.sequence.length === 0) return;
-
-        // Calculate string length and time estimates
-        const stats = this.calculateProjectStats();
-
-        let text = `STRING ART INSTRUCTIONS\n`;
-        text += `=======================\n`;
-        text += `Generated by ${APP_NAME} - (c) ${APP_AUTHOR}\n\n`;
-        text += `ALGORITHM: ${this.gen.algorithm.toUpperCase()}\n`;
-        if (this.gen.algorithm === 'radon') {
-            text += `- Radon Transform angles: ${this.gen.radonAngles}\n`;
-            text += `- Uses all standard parameters (pins, minDistance, threshold, etc.)\n`;
-        }
-        text += `\n`;
-        text += `SETUP:\n`;
-        text += `- Circle radius: ${this.gen.radius} pixels (${stats.physicalRadius.toFixed(1)} cm)\n`;
-        text += `- Number of pins: ${this.gen.numPins}\n`;
-        text += `- Total string connections: ${this.sequence.length}\n\n`;
-        text += `MATERIALS NEEDED:\n`;
-        text += `- String length required: ${stats.stringLength.toFixed(2)} meters\n`;
-        text += `- Recommended: ${stats.stringLengthWithExtra.toFixed(2)} meters (includes 20% extra for knots/waste)\n`;
-        text += `- Board diameter: ${(stats.physicalRadius * 2).toFixed(1)} cm\n`;
-        text += `- Pins/nails: ${this.gen.numPins} pieces\n\n`;
-        text += `TIME ESTIMATE:\n`;
-        text += `- Estimated work time: ${stats.workTimeFormatted}\n`;
-        text += `- With breaks & fatigue: ${stats.totalTimeFormatted}\n`;
-        text += `- Average speed: ${stats.connectionsPerMinute.toFixed(1)} connections/minute\n`;
-        text += `- Recommended sessions: ${stats.recommendedSessions} sessions of ${stats.sessionDuration} minutes each\n\n`;
-        text += `PIN POSITIONS (pin 0 at the 3 o'clock position, numbered clockwise):\n`;
-        this.pins.forEach((pin, i) => {
-            const angle = (i / this.gen.numPins) * 360;
-            text += `Pin ${i}: ${angle.toFixed(1)}°\n`;
-        });
-        text += `\n\nSTRING SEQUENCE:\n`;
-        text += `Follow these steps, connecting the string from pin to pin:\n\n`;
-
-        this.sequence.forEach((step, i) => {
-            text += `${i + 1}. Pin ${step.from} → Pin ${step.to}\n`;
-        });
-
-        this.downloadBlob(new Blob([text], { type: 'text/plain' }), 'string_art_instructions.txt');
-
+        if (!this.result) return;
+        const text = core.buildInstructions(this.result, this.calculateProjectStats());
+        this.downloadBlob(new Blob([text], { type: 'text/plain' }), `${this.imageName}-instructions.txt`);
         this.showStatus('Instructions downloaded!', 'success');
     }
 
     exportJSON() {
-        if (this.isGenerating || this.sequence.length === 0) return;
-
-        const stats = this.calculateProjectStats();
-
-        const data = {
-            metadata: {
-                generated: new Date().toISOString(),
-                type: 'string_art',
-                version: '1.0',
-                algorithm: this.gen.algorithm,
-                generator: APP_NAME,
-                author: APP_AUTHOR,
-                license: APP_LICENSE,
-                // Pin 0 is at the 3 o'clock position; angles increase clockwise
-                // (screen coordinates, y axis pointing down)
-                coordinateSystem: 'origin at circle center, x right, y down, pixels'
-            },
-            parameters: {
-                algorithm: this.gen.algorithm,
-                radius: this.gen.radius,
-                numPins: this.gen.numPins,
-                iterations: this.gen.iterations,
-                lineOpacity: this.gen.lineOpacity,
-                minDistance: this.gen.minDistance
-            },
-            algorithmSpecific: this.gen.algorithm === 'radon' ? {
-                radonAngles: this.gen.radonAngles,
-                threshold: this.gen.threshold,
-                note: "Radon uses all standard parameters plus angle sampling"
-            } : {},
-            physicalDimensions: {
-                radiusPixels: this.gen.radius,
-                radiusCm: stats.physicalRadius,
-                diameterCm: stats.physicalRadius * 2
-            },
-            materials: {
-                stringLengthMeters: parseFloat(stats.stringLength.toFixed(2)),
-                stringLengthWithExtraMeters: parseFloat(stats.stringLengthWithExtra.toFixed(2)),
-                pinsRequired: this.gen.numPins
-            },
-            timeEstimates: {
-                workTimeMinutes: Math.round(stats.workTimeMinutes),
-                totalTimeMinutes: Math.round(stats.totalMinutes),
-                workTimeFormatted: stats.workTimeFormatted,
-                totalTimeFormatted: stats.totalTimeFormatted,
-                recommendedSessions: stats.recommendedSessions,
-                sessionDurationMinutes: stats.sessionDuration,
-                averageConnectionsPerMinute: parseFloat(stats.connectionsPerMinute.toFixed(2))
-            },
-            pins: this.pins.map(pin => ({
-                index: pin.index,
-                x: pin.x - this.centerX,
-                y: pin.y - this.centerY,
-                angle: (pin.index / this.gen.numPins) * 360
-            })),
-            sequence: this.sequence,
-            statistics: {
-                totalConnections: this.sequence.length,
-                uniquePinsUsed: new Set(this.sequence.flatMap(s => [s.from, s.to])).size
-            }
-        };
-
-        const json = JSON.stringify(data, null, 2);
-        this.downloadBlob(new Blob([json], { type: 'application/json' }), 'string_art_robot.json');
-
+        if (!this.result) return;
+        const data = core.buildRobotJSON(this.result, this.calculateProjectStats());
+        this.downloadBlob(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }), `${this.imageName}-robot.json`);
         this.showStatus('JSON downloaded!', 'success');
     }
 
     exportImage() {
-        if (this.isGenerating || this.sequence.length === 0) return;
-
-        // Draw final image
+        if (!this.result) return;
         this.skipToEnd();
-
         this.canvas.toBlob(blob => {
             if (!blob) {
                 this.showStatus('Could not export the image.', 'error');
                 return;
             }
-            this.downloadBlob(blob, 'string_art.png');
+            this.downloadBlob(blob, `${this.imageName}-string-art.png`);
             this.showStatus('Image saved!', 'success');
         }, 'image/png');
+    }
+
+    exportTemplate() {
+        if (!this.result) return;
+        const p = this.result.params;
+        const svg = core.buildPinTemplateSVG(p.numPins, this.params.pinCircleDiameterCm, this.params.nailDiameterMm, p.pinStart);
+        this.downloadBlob(new Blob([svg], { type: 'image/svg+xml' }), `${this.imageName}-pin-template.svg`);
+        this.showStatus('Pin template downloaded! Print it at 100% scale.', 'success');
     }
 
     // Show a status message. It hides itself after `timeout` ms; 0 keeps it
@@ -1172,5 +796,5 @@ class StringArtGenerator {
 
 // Initialize the generator when page loads
 document.addEventListener('DOMContentLoaded', () => {
-    new StringArtGenerator();
+    window.stringArtApp = new StringArtGenerator();
 });

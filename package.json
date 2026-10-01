@@ -5,7 +5,21 @@
   "private": true,
   "license": "LGPL-3.0-or-later",
   "author": "Eduardo Correia <ecorreia@apliant.com.br>",
-  "keywords": ["string-art", "thread-art", "radon-transform", "generative-art", "canvas"],
+  "homepage": "https://github.com/99ecarvalho/StringArt2#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/99ecarvalho/StringArt2.git"
+  },
+  "bugs": {
+    "url": "https://github.com/99ecarvalho/StringArt2/issues"
+  },
+  "keywords": [
+    "string-art",
+    "thread-art",
+    "radon-transform",
+    "generative-art",
+    "canvas"
+  ],
   "engines": {
     "node": ">=18"
   },

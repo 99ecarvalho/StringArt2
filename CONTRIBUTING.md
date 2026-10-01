@@ -30,7 +30,8 @@ a change merged with as little back-and-forth as possible.
 
 ## Reporting bugs
 
-Search the existing issues first. If your bug is new, open an issue and
+Search the [existing issues](https://github.com/99ecarvalho/StringArt2/issues)
+first. If your bug is new, [open an issue](https://github.com/99ecarvalho/StringArt2/issues/new) and
 include:
 
 - the commit hash or release you used, and whether you opened `index.html`
@@ -53,8 +54,8 @@ newer is needed for the tests, the build script, and the local server; there
 is nothing to `npm install`.
 
 ```bash
-git clone <repository-url> string-art-generator
-cd string-art-generator
+git clone https://github.com/99ecarvalho/StringArt2.git
+cd StringArt2
 npm start                        # serves http://localhost:8080 (or open index.html directly)
 npm test                         # runs the tests
 ```

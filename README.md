@@ -271,8 +271,9 @@ This writes `dist/`, which is not tracked in git. See
 
 ## Contributing
 
-Bug reports, documentation fixes, and code are welcome. Please read
-[CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
+Bug reports, documentation fixes, and code are welcome. Report bugs and
+suggest features in the [issue tracker](https://github.com/99ecarvalho/StringArt2/issues),
+and please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 
 ## License
 

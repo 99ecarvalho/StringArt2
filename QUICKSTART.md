@@ -17,8 +17,8 @@ or Safari).
 ### 1. Get the code
 
 ```bash
-git clone <repository-url> string-art-generator
-cd string-art-generator
+git clone https://github.com/99ecarvalho/StringArt2.git
+cd StringArt2
 ```
 
 ### 2. Start it
